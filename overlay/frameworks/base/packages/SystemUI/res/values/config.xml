@@ -50,4 +50,7 @@
     <!-- Doze: pulse parameter - how long does it take to fade in? -->
     <integer name="doze_pulse_duration_in">100</integer>
 
+    <!-- The default tiles to display in QuickSettings -->
+    <string name="quick_settings_tiles_default" translatable="false">wifi,bt,battery,rotation,caffeine</string>
+
 </resources>

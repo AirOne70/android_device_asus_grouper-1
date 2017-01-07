@@ -28,6 +28,7 @@
 # the true camera library when the vendor tree is available.  Similarly,
 # we set USE_PROPRIETARY_AUDIO_EXTENSIONS to true in the proprietary variant as
 # well.
+
 USE_CAMERA_STUB := true
 USE_PROPRIETARY_AUDIO_EXTENSIONS := false
 
@@ -51,8 +52,8 @@ TARGET_ENABLE_NON_PIE_SUPPORT := true
 WITH_DEXPREOPT := false
 HWUI_COMPILE_FOR_PERF := true
 $(call add-product-dex-preopt-module-config,services,--compiler-filter=everything)
+
 PRODUCT_PROPERTY_OVERRIDES += \
-dalvik.vm.dex2oat-flags=--no-watch-dog \
 dalvik.vm.dex2oat-filter=everything \
 dalvik.vm.image-dex2oat-filter=everything
 
