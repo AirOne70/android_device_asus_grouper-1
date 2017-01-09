@@ -1,0 +1,13 @@
+diff --git a/init/Android.mk b/init/Android.mk
+index 67541b81b..ff343e968 100644
+--- a/init/Android.mk
++++ b/init/Android.mk
+@@ -10,7 +10,7 @@ else
+ init_options += -DALLOW_LOCAL_PROP_OVERRIDE=0 -DALLOW_PERMISSIVE_SELINUX=0
+ endif
+ 
+-init_options += -DLOG_UEVENTS=0
++init_options += -DLOG_UEVENTS=0 -D__BRILLO__
+ 
+ init_cflags += \
+     $(init_options) \

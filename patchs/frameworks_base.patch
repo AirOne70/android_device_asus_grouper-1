@@ -1,0 +1,27 @@
+diff --git a/libs/hwui/Android.mk b/libs/hwui/Android.mk
+index cacfce16ab9..c54feeb260c 100644
+--- a/libs/hwui/Android.mk
++++ b/libs/hwui/Android.mk
+@@ -149,7 +149,7 @@ endif
+ 
+ ifdef HWUI_COMPILE_FOR_PERF
+     # TODO: Non-arm?
+-    hwui_cflags += -fno-omit-frame-pointer -marm -mapcs
++    hwui_cflags += -fno-omit-frame-pointer -marm
+ endif
+ 
+ # This has to be lazy-resolved because it depends on the LOCAL_MODULE_CLASS
+diff --git a/packages/MtpDocumentsProvider/src/com/android/mtp/MtpDocumentsProvider.java b/packages/MtpDocumentsProvider/src/com/android/mtp/MtpDocumentsProvider.java
+index 1823711acd5..52c31afc239 100644
+--- a/packages/MtpDocumentsProvider/src/com/android/mtp/MtpDocumentsProvider.java
++++ b/packages/MtpDocumentsProvider/src/com/android/mtp/MtpDocumentsProvider.java
+@@ -137,6 +137,9 @@ public class MtpDocumentsProvider extends DocumentsProvider {
+         } catch (IOException error) {
+             Log.e(TAG, "Failed to start app fuse.", error);
+             return false;
++        } catch (Exception e) {
++            Log.e(TAG, "Failed to mount with appfuse.", e);
++            return false;
+         }
+ 
+         resume();
