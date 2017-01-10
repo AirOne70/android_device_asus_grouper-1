@@ -12,18 +12,10 @@ index ac1926b..d1b5564 100644
  
  # Block device access.
 diff --git a/domain.te b/domain.te
-index d83ebca..7f8fe7e 100644
+index d83ebca..5fce611 100644
 --- a/domain.te
 +++ b/domain.te
-@@ -159,6 +159,7 @@ neverallow {
-   -dumpstate
-   -system_server
-   userdebug_or_eng(`-perfprofd')
-+  userdebug_or_eng(`-procrank')
- } self:capability sys_ptrace;
- 
- # Limit device node creation to these whitelisted domains.
-@@ -293,8 +294,10 @@ neverallow domain { cache_file cache_backup_file cache_private_backup_file cache
+@@ -293,8 +293,10 @@ neverallow domain { cache_file cache_backup_file cache_private_backup_file cache
  # Protect most domains from executing arbitrary content from /data.
  neverallow {
    domain
@@ -36,7 +28,7 @@ index d83ebca..7f8fe7e 100644
    data_file_type
    -dalvikcache_data_file
    -system_data_file # shared libs in apks
-@@ -380,6 +383,8 @@ neverallow {
+@@ -380,6 +382,8 @@ neverallow {
    -cppreopts
    -dex2oat
    -otapreopt_slot
@@ -45,7 +37,7 @@ index d83ebca..7f8fe7e 100644
  } dalvikcache_data_file:file no_w_file_perms;
  
  neverallow {
-@@ -391,6 +396,7 @@ neverallow {
+@@ -391,6 +395,7 @@ neverallow {
    -dex2oat
    -zygote
    -otapreopt_slot
@@ -53,7 +45,7 @@ index d83ebca..7f8fe7e 100644
  } dalvikcache_data_file:dir no_w_dir_perms;
  
  # Only system_server should be able to send commands via the zygote socket
-@@ -584,7 +590,24 @@ neverallow * domain:file { execute execute_no_trans entrypoint };
+@@ -584,7 +589,24 @@ neverallow * domain:file { execute execute_no_trans entrypoint };
  # Instead, if access to part of debugfs is desired, it should have a
  # more specific label.
  # TODO: fix system_server and dumpstate
