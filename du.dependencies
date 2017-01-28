@@ -1,8 +1,8 @@
 [
   {
     "remote": "github",
-    "repository": "millosr/android_kernel_asus_grouper",
+    "repository": "airone70/android_kernel_asus_grouper",
     "target_path": "kernel/asus/grouper",
-    "branch": "ads-7.0.1"
+    "branch": "ads-7.1.0"
   }
 ]
