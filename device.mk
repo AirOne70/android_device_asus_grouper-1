@@ -27,3 +27,6 @@ PRODUCT_PROPERTY_OVERRIDES += \
 
 DEVICE_PACKAGE_OVERLAYS := \
     device/asus/grouper/overlay
+
+# Use specific resolution for bootanimation
+SMALL_BOOTANIMATION_SIZE := 720x720
