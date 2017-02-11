@@ -42,8 +42,8 @@ persist.android.strictmode=0
 # 16bit Transparency
 persist.sys.use_16bpp_alpha=1
 
-#scrolling cache (1 = on, 2 = sometimes on, 3 = sometimes off, 4 = allways off)
-persist.sys.scrollingcache=4
+#scrolling cache (1 = on, 2 = sometimes on, 3 = sometimes off, 4 = always off)
+persist.sys.scrollingcache=2
 
 #debug flags
 persist.adb.notify=0
@@ -51,4 +51,3 @@ ro.adb.secure=0
 ro.debuggable=1
 persist.service.adb.enable=1
 persist.sys.usb.config=mtp,adb
-

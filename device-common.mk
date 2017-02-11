@@ -32,6 +32,10 @@ PRODUCT_PROPERTY_OVERRIDES := \
     wifi.interface=wlan0 \
     wifi.supplicant_scan_interval=15
 
+# Google Assistant
+PRODUCT_PROPERTY_OVERRIDES += \
+    ro.opa.eligible_device=true
+
 # disable Captive portal check
 PRODUCT_PROPERTY_OVERRIDES += \
     ro.disable_captive_portal=1
