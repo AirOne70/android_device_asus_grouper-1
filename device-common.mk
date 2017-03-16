@@ -56,7 +56,7 @@ PRODUCT_COPY_FILES += \
     device/asus/grouper/ueventd.grouper.rc:root/ueventd.grouper.rc \
     device/asus/grouper/gps.conf:system/etc/gps.conf \
     device/asus/grouper/gps/gps.xml:system/etc/gps.xml \
-    device/asus/grouper/touch_fw_update.sh:system/bin/touch_fw_update.sh
+    device/asus/grouper/touch_fw_update.sh:system/bin/touch_fw_update.sh \
     device/asus/grouper/set_hwui_params.sh:system/bin/set_hwui_params.sh
 
 PRODUCT_PACKAGES += \

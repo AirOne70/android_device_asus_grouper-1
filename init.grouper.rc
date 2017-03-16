@@ -265,6 +265,8 @@ on boot
     chown system system /sys/devices/system/cpu/cpufreq/interactive/max_boost
     chmod 0660 /sys/devices/system/cpu/cpufreq/interactive/max_boost
     chown system system /sys/devices/system/cpu/cpufreq/interactive/sustain_load
+    chown system system /sys/devices/system/cpu/cpufreq/interactive/min_core_keep
+    chmod 0660 /sys/devices/system/cpu/cpufreq/interactive/min_core_keep
     chmod 0660 /sys/devices/system/cpu/cpufreq/interactive/sustain_load
     chown system system /sys/devices/system/cpu/cpu0/cpufreq/scaling_min_freq
     chmod 0660 /sys/devices/system/cpu/cpu0/cpufreq/scaling_min_freq
@@ -312,6 +314,7 @@ on boot
 #	write /sys/module/lowmemorykiller/parameters/minfree "8192,10240,12288,14336,16384,20480"
 	write /sys/module/lowmemorykiller/parameters/cost 48
 	write /proc/sys/vm/highmem_is_dirtyable 1
+
 	write /sys/block/mmcblk0/queue/nr_requests 512
 	write /sys/block/mmcblk0/queue/add_random 0
 	write /sys/block/mmcblk0/queue/rq_affinity 2
@@ -416,7 +419,6 @@ service set_hwui_params /system/bin/set_hwui_params.sh
     user root
     group root
     oneshot
-
 
 # bugreport is triggered by the VOLUME-DOWN and VOLUME-UP keys
 service bugreport /system/bin/dumpstate -d -p -B \
