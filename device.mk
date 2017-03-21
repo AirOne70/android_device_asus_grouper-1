@@ -23,7 +23,8 @@ PRODUCT_COPY_FILES := \
 $(call inherit-product, device/asus/grouper/device-common.mk)
 
 PRODUCT_PROPERTY_OVERRIDES += \
-    ro.carrier=wifi-only
+    ro.carrier=wifi-only \
+    ro.radio.noril=true
 
 DEVICE_PACKAGE_OVERLAYS := \
     device/asus/grouper/overlay
