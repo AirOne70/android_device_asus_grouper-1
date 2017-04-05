@@ -17,6 +17,6 @@ PRODUCT_MANUFACTURER := ASUS
 PRODUCT_RESTRICT_VENDOR_FILES := false
 
 PRODUCT_BUILD_PROP_OVERRIDES += \
-    PRODUCT_NAME=grouper \
-    BUILD_FINGERPRINT=google/nakasi/grouper:7.1.1/N6F26T/3687331:user/release-keys \
-    PRIVATE_BUILD_DESC="grouper-user 7.1.1 N6F26T 3687331 release-keys"
+	PRODUCT_NAME=nakasi \
+	BUILD_FINGERPRINT="google/nakasi/grouper:5.1/LMY47D/1743759:user/release-keys" \
+	PRIVATE_BUILD_DESC="nakasi-user 5.1 LMY47D 1743759 release-keys"
