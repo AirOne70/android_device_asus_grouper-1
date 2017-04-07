@@ -127,7 +127,7 @@ PRODUCT_PACKAGES += \
 PRODUCT_PACKAGES += \
     nfc.grouper \
     libpn544_fw \
-    Nfc \
+    NfcNxp \
     Tag
 
 # Filesystem management tools
