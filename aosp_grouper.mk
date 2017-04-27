@@ -14,6 +14,9 @@
 # limitations under the License.
 #
 
+# restrict supported locales to gain some space ...
+TARGET_LOCALES := en_US en_GB en_AU en_IN fr_FR it_IT de_DE es_ES nl_NL cs_CZ pl_PL ja_JP zh_TW zh_CN zh_HK ru_RU ko_KR nb_NO es_US da_DK el_GR tr_TR sk_SK sl_SI sr_RS uk_UA vi_VN
+
 # Inherit from grouper device
 $(call inherit-product, device/asus/grouper/device.mk)
 # Inherit from those products. Most specific first.

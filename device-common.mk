@@ -16,7 +16,7 @@
 
 PRODUCT_CHARACTERISTICS := tablet,nosdcard
 PRODUCT_AAPT_CONFIG := normal large
-PRODUCT_AAPT_PREF_CONFIG := tvdpi
+PRODUCT_AAPT_PREF_CONFIG := hdpi
 
 # A list of dpis to select prebuilt apk, in precedence order.
 PRODUCT_AAPT_PREBUILT_DPI := hdpi
@@ -93,8 +93,6 @@ PRODUCT_COPY_FILES += \
 
 PRODUCT_PACKAGES += \
     libgpsd-compat \
-
-PRODUCT_PACKAGES += \
     libwpa_client \
     hostapd \
     dhcpcd.conf \
@@ -127,7 +125,7 @@ PRODUCT_PACKAGES += \
 PRODUCT_PACKAGES += \
     nfc.grouper \
     libpn544_fw \
-    NfcNxp \
+    Nfc \
     Tag
 
 # Filesystem management tools

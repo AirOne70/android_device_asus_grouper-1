@@ -54,6 +54,7 @@ HWUI_COMPILE_FOR_PERF := true
 $(call add-product-dex-preopt-module-config,services,--compiler-filter=everything)
 
 PRODUCT_PROPERTY_OVERRIDES += \
+dalvik.vm.dex2oat-flags=--no-watch-dog \
 dalvik.vm.dex2oat-filter=everything \
 dalvik.vm.image-dex2oat-filter=everything
 

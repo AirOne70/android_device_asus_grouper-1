@@ -1,8 +1,8 @@
 diff --git a/app.te b/app.te
-index ac1926b..d1b5564 100644
+index 417f464..403b70b 100644
 --- a/app.te
 +++ b/app.te
-@@ -282,7 +282,7 @@ allow appdomain cache_file:dir getattr;
+@@ -280,7 +280,7 @@ allow appdomain cache_file:dir getattr;
  
  # Superuser capabilities.
  # bluetooth requires net_admin and wake_alarm.
@@ -12,36 +12,21 @@ index ac1926b..d1b5564 100644
  
  # Block device access.
 diff --git a/domain.te b/domain.te
-index d59fbe1..5fce611 100644
+index 5b9b5cc..a8c7b93 100644
 --- a/domain.te
 +++ b/domain.te
-@@ -293,8 +293,10 @@ neverallow domain { cache_file cache_backup_file cache_private_backup_file cache
+@@ -294,7 +294,9 @@ neverallow domain { cache_file cache_backup_file cache_private_backup_file cache
  # Protect most domains from executing arbitrary content from /data.
  neverallow {
    domain
 -  -appdomain
--} {
 +  -untrusted_app
 +  -priv_app
 +  -shell
-+ } {
+ } {
    data_file_type
    -dalvikcache_data_file
-   -system_data_file # shared libs in apks
-@@ -324,11 +326,7 @@ neverallow * rootfs:file { create write setattr relabelto append unlink link ren
- 
- # Restrict context mounts to specific types marked with
- # the contextmount_type attribute.
--ifelse(shipping_build, `true',
--  `neverallow * {fs_type -contextmount_type}:filesystem relabelto;'
--,
--  `neverallow * {fs_type -contextmount_type -sdcard_posix}:filesystem relabelto;'
--)
-+neverallow * {fs_type -contextmount_type -sdcard_posix}:filesystem relabelto;
- 
- # Ensure that context mount types are not writable, to ensure that
- # the write to /system restriction above is not bypassed via context=
-@@ -384,6 +382,8 @@ neverallow {
+@@ -382,6 +384,8 @@ neverallow {
    -cppreopts
    -dex2oat
    -otapreopt_slot
@@ -50,7 +35,7 @@ index d59fbe1..5fce611 100644
  } dalvikcache_data_file:file no_w_file_perms;
  
  neverallow {
-@@ -395,6 +395,7 @@ neverallow {
+@@ -393,6 +397,7 @@ neverallow {
    -dex2oat
    -zygote
    -otapreopt_slot
@@ -58,7 +43,7 @@ index d59fbe1..5fce611 100644
  } dalvikcache_data_file:dir no_w_dir_perms;
  
  # Only system_server should be able to send commands via the zygote socket
-@@ -426,7 +427,7 @@ neverallow * { file_type fs_type dev_type }:{ lnk_file fifo_file sock_file } mou
+@@ -424,7 +429,7 @@ neverallow * { file_type fs_type dev_type }:{ lnk_file fifo_file sock_file } mou
  # Nobody should be able to execute su on user builds.
  # On userdebug/eng builds, only dumpstate, shell, and
  # su itself execute su.
@@ -67,7 +52,7 @@ index d59fbe1..5fce611 100644
  
  # Do not allow the introduction of new execmod rules. Text relocations
  # and modification of executable pages are unsafe.
-@@ -588,7 +589,24 @@ neverallow * domain:file { execute execute_no_trans entrypoint };
+@@ -587,7 +592,24 @@ neverallow * domain:file { execute execute_no_trans entrypoint };
  # Instead, if access to part of debugfs is desired, it should have a
  # more specific label.
  # TODO: fix system_server and dumpstate
@@ -93,24 +78,6 @@ index d59fbe1..5fce611 100644
  
  neverallow {
    domain
-diff --git a/file.te b/file.te
-index 461f1f0..ccabd78 100644
---- a/file.te
-+++ b/file.te
-@@ -48,12 +48,7 @@ type shm, fs_type;
- type mqueue, fs_type;
- type fuse, sdcard_type, fs_type, mlstrustedobject;
- type sdcardfs, sdcard_type, fs_type, mlstrustedobject;
--ifelse(shipping_build, `true',
--  # Dummy this out in shipping to avoid breaking code mentioning the label
--  `typealias vfat alias sdcard_posix;'
--,
--  `type sdcard_posix, sdcard_type, fs_type, mlstrustedobject;'
--)
-+type sdcard_posix, sdcard_type, fs_type, mlstrustedobject;
- type vfat, sdcard_type, fs_type, mlstrustedobject;
- type debugfs, fs_type;
- type debugfs_trace_marker, fs_type, debugfs_type, mlstrustedobject;
 diff --git a/priv_app.te b/priv_app.te
 index 85516a6..e1f96d5 100644
 --- a/priv_app.te
@@ -125,7 +92,7 @@ index 85516a6..e1f96d5 100644
  # Do not allow privileged apps to register services.
  # Only trusted components of Android should be registering
 diff --git a/untrusted_app.te b/untrusted_app.te
-index f485241..33efb0b 100644
+index e86c421..3089b04 100644
 --- a/untrusted_app.te
 +++ b/untrusted_app.te
 @@ -62,7 +62,7 @@ allow untrusted_app media_rw_data_file:file create_file_perms;
@@ -137,7 +104,7 @@ index f485241..33efb0b 100644
  
  # allow cts to query all services
  allow untrusted_app servicemanager:service_manager list;
-@@ -122,7 +122,7 @@ neverallow untrusted_app domain:netlink_socket *;
+@@ -125,7 +125,7 @@ neverallow untrusted_app domain:netlink_socket *;
  
  # Too much leaky information in debugfs. It's a security
  # best practice to ensure these files aren't readable.
@@ -146,18 +113,3 @@ index f485241..33efb0b 100644
  
  # Do not allow untrusted apps to register services.
  # Only trusted components of Android should be registering
-diff --git a/vold.te b/vold.te
-index a2b55bb..0ea0321 100644
---- a/vold.te
-+++ b/vold.te
-@@ -41,9 +41,7 @@ allow vold devpts:chr_file rw_file_perms;
- allow vold rootfs:dir mounton;
- allow vold sdcard_type:dir mounton; # TODO: deprecated in M
- allow vold sdcard_type:filesystem { mount remount unmount }; # TODO: deprecated in M
--ifelse(shipping_build, `true', ,
--  allow vold sdcard_posix:filesystem { relabelto relabelfrom };
--)
-+allow vold sdcard_posix:filesystem { relabelto relabelfrom };
- allow vold labeledfs:filesystem { relabelfrom };
- allow vold sdcard_type:dir create_dir_perms; # TODO: deprecated in M
- allow vold sdcard_type:file create_file_perms; # TODO: deprecated in M
