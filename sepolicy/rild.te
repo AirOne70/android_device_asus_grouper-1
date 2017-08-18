@@ -3,4 +3,5 @@
 allow rild sysfs:file write;
 allow rild ctl_rildaemon_prop:property_service set;
 allow rild zygote_exec:file getattr;
+allow rild zygote_exec:file execute;
 
