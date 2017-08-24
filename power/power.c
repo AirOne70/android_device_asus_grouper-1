@@ -200,13 +200,13 @@ static void grouper_power_init( __attribute__((unused)) struct power_module *mod
 {
     sysfs_write("/sys/devices/system/cpu/cpufreq/intelliactive/above_hispeed_delay","30000");
     sysfs_write("/sys/devices/system/cpu/cpufreq/intelliactive/boostpulse","1");
-    sysfs_write("/sys/devices/system/cpu/cpufreq/intelliactive/boostpulse_duration","80000");
-    sysfs_write("/sys/devices/system/cpu/cpufreq/intelliactive/go_hispeed_load","90");
+    sysfs_write("/sys/devices/system/cpu/cpufreq/intelliactive/boostpulse_duration","100000");
+    sysfs_write("/sys/devices/system/cpu/cpufreq/intelliactive/go_hispeed_load","75");
     sysfs_write("/sys/devices/system/cpu/cpufreq/intelliactive/hispeed_freq","860000");
     sysfs_write("/sys/devices/system/cpu/cpufreq/intelliactive/io_is_busy","1");
     sysfs_write("/sys/devices/system/cpu/cpufreq/intelliactive/min_sample_time","40000");
     sysfs_write("/sys/devices/system/cpu/cpufreq/intelliactive/sampling_down_factor","60000");
-    sysfs_write("/sys/devices/system/cpu/cpufreq/intelliactive/sync_freq","780000");
+    sysfs_write("/sys/devices/system/cpu/cpufreq/intelliactive/sync_freq","475000");
     sysfs_write("/sys/devices/system/cpu/cpufreq/intelliactive/target_loads","90");
     sysfs_write("/sys/devices/system/cpu/cpufreq/intelliactive/timer_rate","10000");
     sysfs_write("/sys/devices/system/cpu/cpufreq/intelliactive/timer_slack","30000");
@@ -220,11 +220,21 @@ static void grouper_power_set_interactive(__attribute__((unused)) struct power_m
 {
 	if (on) {
 		sysfs_write("/sys/devices/system/cpu/cpufreq/intelliactive/boostpulse", "1");
+<<<<<<< HEAD
 		sysfs_write("/sys/devices/system/cpu/cpufreq/intelliactive/io_is_busy", "1");
 	}
 	else {
 		sysfs_write("/sys/devices/system/cpu/cpufreq/intelliactive/boostpulse", "0");
 		sysfs_write("/sys/devices/system/cpu/cpufreq/intelliactive/io_is_busy", "0");
+=======
+    		sysfs_write("/sys/devices/system/cpu/cpufreq/intelliactive/io_is_busy", "1");
+    		sysfs_write("/sys/module/intelli_plug/parameters/nr_run_profile_sel", "0");
+	}
+	else {
+		sysfs_write("/sys/devices/system/cpu/cpufreq/intelliactive/boostpulse", "0");
+    		sysfs_write("/sys/devices/system/cpu/cpufreq/intelliactive/io_is_busy", "0");
+    		sysfs_write("/sys/module/intelli_plug/parameters/nr_run_profile_sel", "4");
+>>>>>>> 9156478... try to improve performance
 	}
 }
 
