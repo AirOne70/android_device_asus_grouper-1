@@ -4,4 +4,8 @@ allow rild sysfs:file write;
 allow rild ctl_rildaemon_prop:property_service set;
 allow rild zygote_exec:file getattr;
 allow rild zygote_exec:file execute;
-
+allow rild zygote_exec:file { read open };
+allow rild zygote_exec:file execute_no_trans;
+allow rild debugfs:file write;
+allow rild self:process execmem;
+allow rild servicemanager:binder call;
