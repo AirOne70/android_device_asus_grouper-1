@@ -9,3 +9,6 @@ allow rild zygote_exec:file execute_no_trans;
 allow rild debugfs:file write;
 allow rild self:process execmem;
 allow rild servicemanager:binder call;
+allow rild ashmem_device:chr_file execute;
+allow rild debugfs:file open;
+
