@@ -220,21 +220,13 @@ static void grouper_power_set_interactive(__attribute__((unused)) struct power_m
 {
 	if (on) {
 		sysfs_write("/sys/devices/system/cpu/cpufreq/intelliactive/boostpulse", "1");
-<<<<<<< HEAD
 		sysfs_write("/sys/devices/system/cpu/cpufreq/intelliactive/io_is_busy", "1");
+		sysfs_write("/sys/module/intelli_plug/parameters/nr_run_profile_sel", "0");
 	}
 	else {
 		sysfs_write("/sys/devices/system/cpu/cpufreq/intelliactive/boostpulse", "0");
 		sysfs_write("/sys/devices/system/cpu/cpufreq/intelliactive/io_is_busy", "0");
-=======
-    		sysfs_write("/sys/devices/system/cpu/cpufreq/intelliactive/io_is_busy", "1");
-    		sysfs_write("/sys/module/intelli_plug/parameters/nr_run_profile_sel", "0");
-	}
-	else {
-		sysfs_write("/sys/devices/system/cpu/cpufreq/intelliactive/boostpulse", "0");
-    		sysfs_write("/sys/devices/system/cpu/cpufreq/intelliactive/io_is_busy", "0");
-    		sysfs_write("/sys/module/intelli_plug/parameters/nr_run_profile_sel", "4");
->>>>>>> 9156478... try to improve performance
+		sysfs_write("/sys/module/intelli_plug/parameters/nr_run_profile_sel", "4");
 	}
 }
 
