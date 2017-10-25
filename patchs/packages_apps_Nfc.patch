@@ -1,0 +1,13 @@
+diff --git a/Android.mk b/Android.mk
+index c2b6b89..16363d9 100644
+--- a/Android.mk
++++ b/Android.mk
+@@ -18,6 +18,8 @@ LOCAL_CERTIFICATE := platform
+ 
+ LOCAL_JNI_SHARED_LIBRARIES  := libnfc_jni
+ 
++LOCAL_STATIC_JAVA_LIBRARIES := android-support-v4
++
+ LOCAL_PROGUARD_ENABLED := disabled
+ 
+ include $(BUILD_PACKAGE)

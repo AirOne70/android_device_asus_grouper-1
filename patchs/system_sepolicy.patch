@@ -1,8 +1,8 @@
 diff --git a/app.te b/app.te
-index 417f464..403b70b 100644
+index 815cccf..1a5977b 100644
 --- a/app.te
 +++ b/app.te
-@@ -280,7 +280,7 @@ allow appdomain cache_file:dir getattr;
+@@ -284,7 +284,7 @@ allow appdomain cache_file:dir getattr;
  
  # Superuser capabilities.
  # bluetooth requires net_admin and wake_alarm.
@@ -12,7 +12,7 @@ index 417f464..403b70b 100644
  
  # Block device access.
 diff --git a/domain.te b/domain.te
-index 5b9b5cc..a8c7b93 100644
+index 5b9b5cc..3c68a41 100644
 --- a/domain.te
 +++ b/domain.te
 @@ -294,7 +294,9 @@ neverallow domain { cache_file cache_backup_file cache_private_backup_file cache
@@ -52,29 +52,12 @@ index 5b9b5cc..a8c7b93 100644
  
  # Do not allow the introduction of new execmod rules. Text relocations
  # and modification of executable pages are unsafe.
-@@ -587,7 +592,24 @@ neverallow * domain:file { execute execute_no_trans entrypoint };
+@@ -587,7 +592,7 @@ neverallow * domain:file { execute execute_no_trans entrypoint };
  # Instead, if access to part of debugfs is desired, it should have a
  # more specific label.
  # TODO: fix system_server and dumpstate
 -neverallow { domain -init -system_server -dumpstate userdebug_or_eng(`-qti_debugfs_domain')} debugfs:file no_rw_file_perms;
-+neverallow {
-+  domain
-+  -init
-+  -system_server
-+  -dumpstate
-+  -surfaceflinger
-+  -zygote
-+  -dex2oat
-+  -cameraserver
-+  -audioserver
-+  -bootanim
-+  -shell
-+  -priv_app
-+  -system_app
-+  -untrusted_app
-+  -mediacodec
-+  -mediaserver
-+} debugfs:file no_rw_file_perms;
++#neverallow { domain -init -system_server -dumpstate userdebug_or_eng(`-qti_debugfs_domain')} debugfs:file no_rw_file_perms;
  
  neverallow {
    domain
@@ -92,7 +75,7 @@ index 85516a6..e1f96d5 100644
  # Do not allow privileged apps to register services.
  # Only trusted components of Android should be registering
 diff --git a/untrusted_app.te b/untrusted_app.te
-index e86c421..3089b04 100644
+index d198f3c..823aea2 100644
 --- a/untrusted_app.te
 +++ b/untrusted_app.te
 @@ -62,7 +62,7 @@ allow untrusted_app media_rw_data_file:file create_file_perms;
