@@ -1,0 +1,36 @@
+diff --git a/src/com/android/systemui/navigation/utils/MediaMonitor.java b/src/com/android/systemui/navigation/utils/MediaMonitor.java
+index e1212c3..862f2ca 100644
+--- a/src/com/android/systemui/navigation/utils/MediaMonitor.java
++++ b/src/com/android/systemui/navigation/utils/MediaMonitor.java
+@@ -123,8 +123,7 @@ public abstract class MediaMonitor implements MediaSessionManager.OnActiveSessio
+                 @Override
+                 public void onPlaybackStateChanged(@NonNull PlaybackState state) {
+                     if (state != null && isPlaybackActive(state.getState())) {
+-                        mIsPlaying = (state.getState() == PlaybackState.STATE_PLAYING
+-                                || state.getState() == PlaybackState.STATE_BUFFERING)
++                        mIsPlaying = state.getState() == PlaybackState.STATE_PLAYING
+                                 && !controller.getPackageName().toLowerCase().contains("youtube")
+                                 && !controller.getPackageName().toLowerCase().contains("chrome");
+                         checkIfPlaying();
+@@ -140,8 +139,7 @@ public abstract class MediaMonitor implements MediaSessionManager.OnActiveSessio
+             controller.registerCallback(mCallback);
+ 
+             mIsPlaying = controller.getPlaybackState() != null
+-                    && (controller.getPlaybackState().getState() == PlaybackState.STATE_PLAYING
+-                    || controller.getPlaybackState().getState() == PlaybackState.STATE_BUFFERING)
++                    && controller.getPlaybackState().getState() == PlaybackState.STATE_PLAYING
+                     && !controller.getPackageName().toLowerCase().contains("youtube")
+                     && !controller.getPackageName().toLowerCase().contains("chrome");
+         }
+@@ -176,9 +174,8 @@ public abstract class MediaMonitor implements MediaSessionManager.OnActiveSessio
+         List<MediaController> activeSessions = mMediaSessionManager.getActiveSessions(null);
+         for (MediaController activeSession : activeSessions) {
+             PlaybackState playbackState = activeSession.getPlaybackState();
+-            if (playbackState != null && (playbackState.getState()
+-                    == PlaybackState.STATE_PLAYING
+-                    || playbackState.getState() == PlaybackState.STATE_BUFFERING)) {
++            if (playbackState != null && playbackState.getState()
++                    == PlaybackState.STATE_PLAYING) {
+                 return true;
+             }
+         }

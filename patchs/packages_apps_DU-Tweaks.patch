@@ -1,0 +1,15 @@
+diff --git a/src/com/dirtyunicorns/dutweaks/fragments/LockItems.java b/src/com/dirtyunicorns/dutweaks/fragments/LockItems.java
+index 1aa271f..5574826 100644
+--- a/src/com/dirtyunicorns/dutweaks/fragments/LockItems.java
++++ b/src/com/dirtyunicorns/dutweaks/fragments/LockItems.java
+@@ -74,9 +74,7 @@ public class LockItems extends SettingsPreferenceFragment implements OnPreferenc
+ 
+         // We need to remove the lockscreen battery info if the device is not a Qualcomm device
+         mLockscreenBatteryInfo = (SwitchPreference) findPreference(PREF_LOCKSCREEN_BATTERY_INFO);
+-        if (Build.BOARD.contains("dragon") || Build.BOARD.contains("shieldtablet")) {
+-            prefSet.removePreference(mLockscreenBatteryInfo);
+-        }
++        prefSet.removePreference(mLockscreenBatteryInfo);
+ 
+         mActions = (PreferenceCategory) findPreference(KEY_ACTIONS);
+         mKeyguardTorch = (SwitchPreference) findPreference(KEYGUARD_TOGGLE_TORCH);
