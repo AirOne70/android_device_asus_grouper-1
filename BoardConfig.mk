@@ -63,4 +63,7 @@ dalvik.vm.usejit=true \
 dalvik.vm.heaptargetutilization=0.9 \
 dalvik.vm.dexopt-flags=v=a,o=v
 
+PRODUCT_PROPERTY_OVERRIDES += \
+     pm.dexopt.shared=quicken
+
 
