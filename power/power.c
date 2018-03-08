@@ -199,7 +199,7 @@ static void grouper_power_set_feature(__attribute__((unused)) struct power_modul
 
 static void grouper_power_init( __attribute__((unused)) struct power_module *module)
 {
-    sysfs_write("/sys/devices/system/cpu/cpufreq/intelliactive/above_hispeed_delay","20000");
+    sysfs_write("/sys/devices/system/cpu/cpufreq/intelliactive/above_hispeed_delay","40000");
     sysfs_write("/sys/devices/system/cpu/cpufreq/intelliactive/boostpulse","1");
     sysfs_write("/sys/devices/system/cpu/cpufreq/intelliactive/boostpulse_duration","80000");
     sysfs_write("/sys/devices/system/cpu/cpufreq/intelliactive/go_hispeed_load","95");
