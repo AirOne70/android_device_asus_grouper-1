@@ -42,19 +42,20 @@ on post-fs-data
     mkdir /data/amit
 
     # gps
-    write /sys/class/gpio/export 162
-    write /sys/class/gpio/gpio162/value 0
-    write /sys/class/gpio/gpio162/direction out
-    chown gps system /sys/class/gpio/gpio162/value
-    chmod 0644 /sys/class/gpio/gpio162/value
     mkdir /data/gps
     chown gps system /data/gps
-    chmod 770 /data/gps
+    chmod 1770 /data/gps
+    write /sys/class/gpio/export 162
+    write /sys/class/gpio/gpio162/direction out
+    write /sys/class/gpio/gpio162/value 0
+    chown gps system /sys/class/gpio/gpio162/value
+    chmod 0644 /sys/class/gpio/gpio162/value
     chown gps system /dev/ttyHS1
     chmod 0660 /dev/ttyHS1
 
     # Set indication (checked by vold) that we have finished this action
     setprop vold.post_fs_data_done 1
+
 
 on boot
 
@@ -94,6 +95,14 @@ on boot
     chown system system /sys/class/graphics/fb0/device/smartdimmer/aggressiveness
     chown system system /sys/class/graphics/fb0/device/smartdimmer/phase_in_adjustments
 
+# Double tap to wake settings
+    chown system system /sys/android_touch/doubletap_wake
+    chmod 0664 /sys/android_touch/doubletap_wake
+    chown system system /sys/android_touch/dt_delta_limit
+    chmod 0664 /sys/android_touch/dt_delta_limit
+    chown system system /sys/android_touch/dt_timeout
+    chmod 0664 /sys/android_touch/dt_timeout
+
 # power
     chown system system /sys/kernel/tegra_cap/core_cap_level
     chown system system /sys/kernel/tegra_cap/core_cap_state
@@ -106,11 +115,90 @@ on boot
     chown system system /sys/devices/system/cpu/cpuquiet/tegra_cpuquiet/no_lp
     chown system system /sys/devices/platform/host1x/nvavp/boost_sclk
     chown system system /sys/devices/tegradc.0/enable
-    chown system system /sys/devices/tegradc.1/enable
+    chown system system /sys/devices/host1x/gr3d/enable_3d_scaling 
     chmod 0660 /sys/devices/system/cpu/cpuquiet/tegra_cpuquiet/no_lp
     chmod 0660 /sys/devices/platform/host1x/nvavp/boost_sclk
     chmod 0660 /sys/devices/tegradc.0/enable
-    chmod 0660 /sys/devices/tegradc.1/enable
+    chmod 0660 /sys/devices/host1x/gr3d/enable_3d_scaling
+
+    # Intelliactive governor settings
+    write /sys/devices/system/cpu/cpu0/cpufreq/scaling_governor intelliactive
+    write /sys/devices/system/cpu/cpu1/cpufreq/scaling_governor intelliactive
+    write /sys/devices/system/cpu/cpu2/cpufreq/scaling_governor intelliactive
+    write /sys/devices/system/cpu/cpu3/cpufreq/scaling_governor intelliactive
+    write /sys/devices/system/cpu/cpufreq/intelliactive/above_hispeed_delay 20000
+    write /sys/devices/system/cpu/cpufreq/intelliactive/boost 0
+    write /sys/devices/system/cpu/cpufreq/intelliactive/boostpulse 1
+    write /sys/devices/system/cpu/cpufreq/intelliactive/boostpulse_duration 80000
+    write /sys/devices/system/cpu/cpufreq/intelliactive/go_hispeed_load 95
+    write /sys/devices/system/cpu/cpufreq/intelliactive/hispeed_freq 1000000
+    write /sys/devices/system/cpu/cpufreq/intelliactive/io_is_busy 1
+    write /sys/devices/system/cpu/cpufreq/intelliactive/min_sample_time 20000
+    write /sys/devices/system/cpu/cpufreq/intelliactive/sampling_down_factor 40000
+    write /sys/devices/system/cpu/cpufreq/intelliactive/sync_freq 640000
+    write /sys/devices/system/cpu/cpufreq/intelliactive/target_loads 85
+    write /sys/devices/system/cpu/cpufreq/intelliactive/timer_rate 10000
+    write /sys/devices/system/cpu/cpufreq/intelliactive/timer_slack 40000
+    write /sys/devices/system/cpu/cpufreq/intelliactive/up_threshold_any_cpu_freq 860000
+    write /sys/devices/system/cpu/cpufreq/intelliactive/up_threshold_any_cpu_load 85 
+    write /sys/devices/system/cpu/cpufreq/intelliactive/two_phase_freq 475000,640000,860000,1000000
+    chown system system /sys/devices/system/cpu/cpu0/cpufreq/scaling_governor
+    chown system system /sys/devices/system/cpu/cpu0/cpufreq/scaling_min_freq
+    chown system system /sys/devices/system/cpu/cpu0/cpufreq/scaling_max_freq
+    chown system system /sys/devices/system/cpu/cpu1/cpufreq/scaling_governor
+    chown system system /sys/devices/system/cpu/cpu1/cpufreq/scaling_min_freq
+    chown system system /sys/devices/system/cpu/cpu1/cpufreq/scaling_max_freq
+    chown system system /sys/devices/system/cpu/cpu2/cpufreq/scaling_governor
+    chown system system /sys/devices/system/cpu/cpu2/cpufreq/scaling_min_freq
+    chown system system /sys/devices/system/cpu/cpu2/cpufreq/scaling_max_freq
+    chown system system /sys/devices/system/cpu/cpu3/cpufreq/scaling_governor
+    chown system system /sys/devices/system/cpu/cpu3/cpufreq/scaling_min_freq
+    chown system system /sys/devices/system/cpu/cpu3/cpufreq/scaling_max_freq
+    chown system system /sys/devices/system/cpu/cpufreq/intelliactive/above_hispeed_delay
+    chown system system /sys/devices/system/cpu/cpufreq/intelliactive/boost
+    chown system system /sys/devices/system/cpu/cpufreq/intelliactive/boostpulse
+    chown system system /sys/devices/system/cpu/cpufreq/intelliactive/boostpulse_duration
+    chown system system /sys/devices/system/cpu/cpufreq/intelliactive/go_hispeed_load
+    chown system system /sys/devices/system/cpu/cpufreq/intelliactive/hispeed_freq
+    chown system system /sys/devices/system/cpu/cpufreq/intelliactive/io_is_busy
+    chown system system /sys/devices/system/cpu/cpufreq/intelliactive/min_sample_time
+    chown system system /sys/devices/system/cpu/cpufreq/intelliactive/sampling_down_factor
+    chown system system /sys/devices/system/cpu/cpufreq/intelliactive/sync_freq
+    chown system system /sys/devices/system/cpu/cpufreq/intelliactive/target_loads
+    chown system system /sys/devices/system/cpu/cpufreq/intelliactive/timer_rate
+    chown system system /sys/devices/system/cpu/cpufreq/intelliactive/timer_slack
+    chown system system /sys/devices/system/cpu/cpufreq/intelliactive/up_threshold_any_cpu_freq
+    chown system system /sys/devices/system/cpu/cpufreq/intelliactive/up_threshold_any_cpu_load
+    chown system system /sys/devices/system/cpu/cpufreq/intelliactive/two_phase_freq
+    chmod 0660 /sys/devices/system/cpu/cpu0/cpufreq/scaling_governor
+    chmod 0660 /sys/devices/system/cpu/cpu0/cpufreq/scaling_min_freq
+    chmod 0660 /sys/devices/system/cpu/cpu0/cpufreq/scaling_max_freq
+    chmod 0660 /sys/devices/system/cpu/cpu1/cpufreq/scaling_governor
+    chmod 0660 /sys/devices/system/cpu/cpu1/cpufreq/scaling_min_freq
+    chmod 0660 /sys/devices/system/cpu/cpu1/cpufreq/scaling_max_freq
+    chmod 0660 /sys/devices/system/cpu/cpu2/cpufreq/scaling_governor
+    chmod 0660 /sys/devices/system/cpu/cpu2/cpufreq/scaling_min_freq
+    chmod 0660 /sys/devices/system/cpu/cpu2/cpufreq/scaling_max_freq
+    chmod 0660 /sys/devices/system/cpu/cpu3/cpufreq/scaling_governor
+    chmod 0660 /sys/devices/system/cpu/cpu3/cpufreq/scaling_min_freq
+    chmod 0660 /sys/devices/system/cpu/cpu3/cpufreq/scaling_max_freq
+    chmod 0660 /sys/devices/system/cpu/cpufreq/intelliactive/above_hispeed_delay
+    chmod 0660 /sys/devices/system/cpu/cpufreq/intelliactive/boost
+    chmod 0660 /sys/devices/system/cpu/cpufreq/intelliactive/boostpulse
+    chmod 0660 /sys/devices/system/cpu/cpufreq/intelliactive/boostpulse_duration
+    chmod 0660 /sys/devices/system/cpu/cpufreq/intelliactive/go_hispeed_load
+    chmod 0660 /sys/devices/system/cpu/cpufreq/intelliactive/hispeed_freq
+    chmod 0660 /sys/devices/system/cpu/cpufreq/intelliactive/io_is_busy
+    chmod 0660 /sys/devices/system/cpu/cpufreq/intelliactive/min_sample_time
+    chmod 0660 /sys/devices/system/cpu/cpufreq/intelliactive/sampling_down_factor
+    chmod 0660 /sys/devices/system/cpu/cpufreq/intelliactive/sync_freq
+    chmod 0660 /sys/devices/system/cpu/cpufreq/intelliactive/target_loads
+    chmod 0660 /sys/devices/system/cpu/cpufreq/intelliactive/timer_rate
+    chmod 0660 /sys/devices/system/cpu/cpufreq/intelliactive/timer_slack
+    chmod 0660 /sys/devices/system/cpu/cpufreq/intelliactive/up_threshold_any_cpu_freq
+    chmod 0660 /sys/devices/system/cpu/cpufreq/intelliactive/up_threshold_any_cpu_load
+    chmod 0660 /sys/devices/system/cpu/cpufreq/intelliactive/two_phase_freq
+    restorecon_recursive /sys/devices/system/cpu/cpufreq/intelliactive
 
 # Sensor
 # iio
@@ -257,24 +345,6 @@ on boot
     chmod 600 /sys/bus/iio/devices/iio:device1/scan_elements/in_timestamp_en
     chmod 600 /sys/bus/iio/devices/iio:device1/trigger/current_trigger
 
-# Intelliactive governor settings
-    chown system system /sys/devices/system/cpu/cpu0/cpufreq/scaling_governor
-    chown system system /sys/devices/system/cpu/cpufreq/intelliactive/above_hispeed_delay
-    chown system system /sys/devices/system/cpu/cpufreq/intelliactive/boost
-    chown system system /sys/devices/system/cpu/cpufreq/intelliactive/boostpulse
-    chown system system /sys/devices/system/cpu/cpufreq/intelliactive/boostpulse_duration
-    chown system system /sys/devices/system/cpu/cpufreq/intelliactive/go_hispeed_load
-    chown system system /sys/devices/system/cpu/cpufreq/intelliactive/hispeed_freq
-    chown system system /sys/devices/system/cpu/cpufreq/intelliactive/io_is_busy
-    chown system system /sys/devices/system/cpu/cpufreq/intelliactive/min_sample_time
-    chown system system /sys/devices/system/cpu/cpufreq/intelliactive/sampling_down_factor
-    chown system system /sys/devices/system/cpu/cpufreq/intelliactive/sync_freq
-    chown system system /sys/devices/system/cpu/cpufreq/intelliactive/target_loads
-    chown system system /sys/devices/system/cpu/cpufreq/intelliactive/timer_rate
-    chown system system /sys/devices/system/cpu/cpufreq/intelliactive/timer_slack
-    chown system system /sys/devices/system/cpu/cpufreq/intelliactive/up_threshold_any_cpu_freq
-    chown system system /sys/devices/system/cpu/cpufreq/intelliactive/up_threshold_any_cpu_load
-    chown system system /sys/devices/system/cpu/cpufreq/intelliactive/two_phase_freq
     chown system system /sys/module/cpu_tegra3/parameters/no_lp
     chown system system /sys/module/cpu_tegra3/parameters/auto_hotplug
     chown system system /sys/module/cpuidle/parameters/lp2_in_idle
@@ -289,26 +359,9 @@ on boot
     chown system system /sys/module/lowmemorykiller/parameters/minfree
     chown system system /sys/module/lowmemorykiller/parameters/vmpressure_file_min
 
-    chmod 0660 /sys/devices/system/cpu/cpu0/cpufreq/scaling_governor
-    chmod 0660 /sys/devices/system/cpu/cpufreq/intelliactive/above_hispeed_delay
-    chmod 0660 /sys/devices/system/cpu/cpufreq/intelliactive/boost
-    chmod 0660 /sys/devices/system/cpu/cpufreq/intelliactive/boostpulse
-    chmod 0660 /sys/devices/system/cpu/cpufreq/intelliactive/boostpulse_duration
-    chmod 0660 /sys/devices/system/cpu/cpufreq/intelliactive/go_hispeed_load
-    chmod 0660 /sys/devices/system/cpu/cpufreq/intelliactive/hispeed_freq
-    chmod 0660 /sys/devices/system/cpu/cpufreq/intelliactive/io_is_busy
-    chmod 0660 /sys/devices/system/cpu/cpufreq/intelliactive/min_sample_time
-    chmod 0660 /sys/devices/system/cpu/cpufreq/intelliactive/sampling_down_factor
-    chmod 0660 /sys/devices/system/cpu/cpufreq/intelliactive/sync_freq
-    chmod 0660 /sys/devices/system/cpu/cpufreq/intelliactive/target_loads
-    chmod 0660 /sys/devices/system/cpu/cpufreq/intelliactive/timer_rate
-    chmod 0660 /sys/devices/system/cpu/cpufreq/intelliactive/timer_slack
-    chmod 0660 /sys/devices/system/cpu/cpufreq/intelliactive/up_threshold_any_cpu_freq
-    chmod 0660 /sys/devices/system/cpu/cpufreq/intelliactive/up_threshold_any_cpu_load
-    chmod 0660 /sys/devices/system/cpu/cpufreq/intelliactive/two_phase_freq
     chmod 0660 /sys/module/cpu_tegra3/parameters/no_lp
     chmod 0660 /sys/module/cpu_tegra3/parameters/auto_hotplug
-    chmod 0660 /sys/module/cpuidle/parameters/lp2_in_idle
+    chmod 0660 /sys/module/cpuidle/parameters/lp2_in_idle 
     chmod 0660 /sys/module/intelli_plug/parameters/nr_run_profile_sel
     chmod 0600 /sys/module/intelli_plug/parameters/cpu_nr_run_threshold
     chmod 0600 /sys/module/intelli_plug/parameters/nr_run_hysteresis
@@ -320,31 +373,7 @@ on boot
     chmod 0660 /sys/module/lowmemorykiller/parameters/minfree
     chmod 0660 /sys/module/lowmemorykiller/parameters/vmpressure_file_min
 
-# Double tap to wake settings
-    chown system system /sys/android_touch/doubletap_wake
-    chmod 0664 /sys/android_touch/doubletap_wake
-    chown system system /sys/android_touch/dt_delta_limit
-    chmod 0664 /sys/android_touch/dt_delta_limit
-    chown system system /sys/android_touch/dt_timeout
-    chmod 0664 /sys/android_touch/dt_timeout
-
 # Power management settings
-    write /sys/devices/system/cpu/cpufreq/intelliactive/above_hispeed_delay 40000
-    write /sys/devices/system/cpu/cpufreq/intelliactive/boost 0
-    write /sys/devices/system/cpu/cpufreq/intelliactive/boostpulse 1
-    write /sys/devices/system/cpu/cpufreq/intelliactive/boostpulse_duration 80000
-    write /sys/devices/system/cpu/cpufreq/intelliactive/go_hispeed_load 95
-    write /sys/devices/system/cpu/cpufreq/intelliactive/hispeed_freq 1000000
-    write /sys/devices/system/cpu/cpufreq/intelliactive/io_is_busy 1
-    write /sys/devices/system/cpu/cpufreq/intelliactive/min_sample_time 20000
-    write /sys/devices/system/cpu/cpufreq/intelliactive/sampling_down_factor 40000
-    write /sys/devices/system/cpu/cpufreq/intelliactive/sync_freq 640000
-    write /sys/devices/system/cpu/cpufreq/intelliactive/target_loads 85
-    write /sys/devices/system/cpu/cpufreq/intelliactive/timer_rate 10000
-    write /sys/devices/system/cpu/cpufreq/intelliactive/timer_slack 40000
-    write /sys/devices/system/cpu/cpufreq/intelliactive/up_threshold_any_cpu_freq 860000
-    write /sys/devices/system/cpu/cpufreq/intelliactive/up_threshold_any_cpu_load 85 
-    write /sys/devices/system/cpu/cpufreq/intelliactive/two_phase_freq 475000,640000,860000,1000000
     write /sys/devices/system/cpu/cpufreq/interactive/boost_factor 2
     write /sys/devices/system/cpu/cpufreq/interactive/sustain_load 80
 
@@ -356,7 +385,6 @@ on boot
     write /sys/module/intelli_plug/parameters/nr_run_hysteresis 12
     write /sys/module/intelli_plug/parameters/screen_off_max 640000
     write /sys/module/intelli_plug/parameters/intelli_plug_active 0
-
 # Default Read Ahead value for sdcards
     write /sys/block/mmcblk0/queue/read_ahead_kb 128
     write /sys/block/mmcblk0/queue/nr_requests 512
@@ -366,6 +394,16 @@ on boot
     write /sys/block/mmcblk1/queue/nr_requests 512
     write /sys/block/mmcblk1/queue/add_random 0
     write /sys/block/mmcblk1/queue/rq_affinity 2
+
+# Load WiFi driver
+
+# BB mapping symbolic name to the logging ttyACM port
+    symlink /dev/ttyACM2 /dev/log_modem
+
+# Touch
+    chown system system /dev/elan-iap
+    chown system system /proc/ektf_dbg  
+    start touch_fw_update
 
 # initialize KSM
     write /sys/kernel/mm/ksm/deferred_timer 1
@@ -380,7 +418,8 @@ on boot
     write /proc/sys/vm/dirty_background_ratio 10 
     write /sys/block/zram0/max_comp_streams 2
 
-# some additional performance tweaks
+
+# some additional performance tweaks (to be tested)
 	setprop dalvik.vm.heapgrowthlimit 128m
 	setprop dalvik.vm.heapsize 256m
 	write /sys/module/lowmemorykiller/parameters/adj "0,1,2,4,9,12"
@@ -404,19 +443,9 @@ on boot
 	write /sys/devices/tegradc.0/smartdimmer/enable 0
 	write /sys/devices/host1x/gr3d/enable_3d_scaling 1
 
-# Load WiFi driver
-
-# BB mapping symbolic name to the logging ttyACM port
-    symlink /dev/ttyACM2 /dev/log_modem
-
-# Touch
-    chown system system /dev/elan-iap
-    chown system system /proc/ektf_dbg  
-    start touch_fw_update
-
 # stop ril-daemon if this is a wifi-only device
 on property:ro.carrier=wifi-only
-	stop ril-daemon
+    stop ril-daemon
 
 service wpa_supplicant /system/bin/wpa_supplicant \
     -iwlan0 -Dnl80211 -c/data/misc/wifi/wpa_supplicant.conf \
@@ -432,9 +461,9 @@ service wpa_supplicant /system/bin/wpa_supplicant \
     oneshot
 
 service p2p_supplicant /system/bin/wpa_supplicant \
-    -iwlan0 -Dnl80211 -c/data/misc/wifi/wpa_supplicant.conf \
+    -iwlan0 -Dnl80211 -iwlan0 -c/data/misc/wifi/wpa_supplicant.conf \
     -I/system/etc/wifi/wpa_supplicant_overlay.conf -N \
-    -ip2p0 -Dnl80211 -c/data/misc/wifi/p2p_supplicant.conf \
+    -ip2p0 -Dnl80211 -c /data/misc/wifi/p2p_supplicant.conf \
     -I/system/etc/wifi/p2p_supplicant_overlay.conf \
     -puse_p2p_group_interface=1 -e/data/misc/wifi/entropy.bin \
     -g@android:wpa_wlan0
@@ -544,4 +573,3 @@ service sensors-calib /system/bin/sensors-load-calibration.sh
     class main
     user root
     oneshot
-
