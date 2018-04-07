@@ -261,7 +261,7 @@
     <bool name="config_enableAutoPowerModes">true</bool>
     
     <!-- Whether device supports double tap to wake -->
-    <bool name="config_supportDoubleTapWake">true</bool>
+    <bool name="config_supportDoubleTapWake">false</bool>
     
     <bool name="config_cameraDoubleTapPowerGestureEnabled">false</bool>
 

@@ -95,14 +95,6 @@ on boot
     chown system system /sys/class/graphics/fb0/device/smartdimmer/aggressiveness
     chown system system /sys/class/graphics/fb0/device/smartdimmer/phase_in_adjustments
 
-# Double tap to wake settings
-    chown system system /sys/android_touch/doubletap_wake
-    chmod 0664 /sys/android_touch/doubletap_wake
-    chown system system /sys/android_touch/dt_delta_limit
-    chmod 0664 /sys/android_touch/dt_delta_limit
-    chown system system /sys/android_touch/dt_timeout
-    chmod 0664 /sys/android_touch/dt_timeout
-
 # power
     chown system system /sys/kernel/tegra_cap/core_cap_level
     chown system system /sys/kernel/tegra_cap/core_cap_state
