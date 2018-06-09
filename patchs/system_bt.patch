@@ -1,0 +1,736 @@
+diff --git a/bta/gatt/bta_gattc_cache.c b/bta/gatt/bta_gattc_cache.c
+index 63c42469..45d25882 100644
+--- a/bta/gatt/bta_gattc_cache.c
++++ b/bta/gatt/bta_gattc_cache.c
+@@ -1551,7 +1551,7 @@ bool bta_gattc_cache_load(tBTA_GATTC_CLCB *p_clcb)
+ 
+     attr = osi_malloc(sizeof(tBTA_GATTC_NV_ATTR) * num_attr);
+ 
+-    if (fread(attr, sizeof(tBTA_GATTC_NV_ATTR), 0xFF, fd) != num_attr) {
++    if (fread(attr, sizeof(tBTA_GATTC_NV_ATTR), num_attr, fd) != num_attr) {
+         APPL_TRACE_ERROR("%s: can't read GATT attributes: %s", __func__, fname);
+         goto done;
+     }
+diff --git a/btif/src/btif_sdp_server.c b/btif/src/btif_sdp_server.c
+index d02dfa0b..90d74cf5 100644
+--- a/btif/src/btif_sdp_server.c
++++ b/btif/src/btif_sdp_server.c
+@@ -215,7 +215,8 @@ static int alloc_sdp_slot(bluetooth_sdp_record* in_record) {
+ static int free_sdp_slot(int id) {
+     int handle = -1;
+     bluetooth_sdp_record* record = NULL;
+-    if(id >= MAX_SDP_SLOTS) {
++    if(id < 0 || id >= MAX_SDP_SLOTS) {
++        android_errorWriteLog(0x534e4554, "37502513");
+         APPL_TRACE_ERROR("%s() failed - id %d is invalid", __func__, id);
+         return handle;
+     }
+diff --git a/osi/src/alarm.c b/osi/src/alarm.c
+index 69ded69e..5f9e42ce 100644
+--- a/osi/src/alarm.c
++++ b/osi/src/alarm.c
+@@ -64,7 +64,6 @@ typedef struct {
+   size_t rescheduled_count;
+   size_t total_updates;
+   period_ms_t last_update_ms;
+-  stat_t callback_execution;
+   stat_t overdue_scheduling;
+   stat_t premature_scheduling;
+ } alarm_stats_t;
+@@ -136,8 +135,7 @@ static void callback_dispatch(void *context);
+ static bool timer_create_internal(const clockid_t clock_id, timer_t *timer);
+ static void update_scheduling_stats(alarm_stats_t *stats,
+                                     period_ms_t now_ms,
+-                                    period_ms_t deadline_ms,
+-                                    period_ms_t execution_delta_ms);
++                                    period_ms_t deadline_ms);
+ 
+ static void update_stat(stat_t *stat, period_ms_t delta)
+ {
+@@ -614,14 +612,12 @@ static void alarm_queue_ready(fixed_queue_t *queue,
+   pthread_mutex_lock(&alarm->callback_lock);
+   pthread_mutex_unlock(&monitor);
+ 
+-  period_ms_t t0 = now();
+-  callback(data);
+-  period_ms_t t1 = now();
+-
+   // Update the statistics
+-  assert(t1 >= t0);
+-  period_ms_t delta = t1 - t0;
+-  update_scheduling_stats(&alarm->stats, t0, deadline, delta);
++  update_scheduling_stats(&alarm->stats, now(), deadline);
++
++  // NOTE: Do NOT access "alarm" after the callback, as a safety precaution
++  // in case the callback itself deleted the alarm.
++  callback(data);
+ 
+   pthread_mutex_unlock(&alarm->callback_lock);
+ }
+@@ -695,14 +691,11 @@ static bool timer_create_internal(const clockid_t clock_id, timer_t *timer) {
+ 
+ static void update_scheduling_stats(alarm_stats_t *stats,
+                                     period_ms_t now_ms,
+-                                    period_ms_t deadline_ms,
+-                                    period_ms_t execution_delta_ms)
++                                    period_ms_t deadline_ms)
+ {
+   stats->total_updates++;
+   stats->last_update_ms = now_ms;
+ 
+-  update_stat(&stats->callback_execution, execution_delta_ms);
+-
+   if (deadline_ms < now_ms) {
+     // Overdue scheduling
+     period_ms_t delta_ms = now_ms - deadline_ms;
+@@ -755,7 +748,7 @@ void alarm_debug_dump(int fd)
+     dprintf(fd, "%-51s: %zu / %zu / %zu / %zu\n",
+             "    Action counts (sched/resched/exec/cancel)",
+             stats->scheduled_count, stats->rescheduled_count,
+-            stats->callback_execution.count, stats->canceled_count);
++            stats->total_updates, stats->canceled_count);
+ 
+     dprintf(fd, "%-51s: %zu / %zu\n",
+             "    Deviation counts (overdue/premature)",
+@@ -768,9 +761,6 @@ void alarm_debug_dump(int fd)
+             (unsigned long long) alarm->period,
+             (long long)(alarm->deadline - just_now));
+ 
+-    dump_stat(fd, &stats->callback_execution,
+-              "    Callback execution time in ms (total/max/avg)");
+-
+     dump_stat(fd, &stats->overdue_scheduling,
+               "    Overdue scheduling time in ms (total/max/avg)");
+ 
+diff --git a/osi/src/config.c b/osi/src/config.c
+index 345f907d..0e8c4217 100644
+--- a/osi/src/config.c
++++ b/osi/src/config.c
+@@ -34,6 +34,7 @@
+ #include "osi/include/allocator.h"
+ #include "osi/include/list.h"
+ #include "osi/include/log.h"
++#include "log/log.h"
+ 
+ typedef struct {
+   char *key;
+diff --git a/stack/avrc/avrc_pars_ct.c b/stack/avrc/avrc_pars_ct.c
+index 63cc3840..bd96d6cd 100644
+--- a/stack/avrc/avrc_pars_ct.c
++++ b/stack/avrc/avrc_pars_ct.c
+@@ -22,6 +22,7 @@
+ #include "avrc_defs.h"
+ #include "avrc_int.h"
+ #include "bt_utils.h"
++#include "log/log.h"
+ 
+ /*****************************************************************************
+ **  Global data
+@@ -241,6 +242,12 @@ static tAVRC_STS avrc_ctrl_pars_vendor_rsp(
+         }
+         BE_STREAM_TO_UINT8(p_result->list_app_values.num_val, p);
+         AVRC_TRACE_DEBUG("%s value count = %d ", __func__, p_result->list_app_values.num_val);
++
++        if (p_result->list_app_attr.num_attr > AVRC_MAX_APP_ATTR_SIZE) {
++          android_errorWriteLog(0x534e4554, "63146237");
++          p_result->list_app_attr.num_attr = AVRC_MAX_APP_ATTR_SIZE;
++        }
++ 
+         for(int xx = 0; xx < p_result->list_app_values.num_val; xx++)
+         {
+             BE_STREAM_TO_UINT8(p_result->list_app_values.vals[xx], p);
+@@ -258,6 +265,12 @@ static tAVRC_STS avrc_ctrl_pars_vendor_rsp(
+         tAVRC_APP_SETTING *app_sett =
+             (tAVRC_APP_SETTING*)osi_malloc(p_result->get_cur_app_val.num_val*sizeof(tAVRC_APP_SETTING));
+         AVRC_TRACE_DEBUG("%s attr count = %d ", __func__, p_result->get_cur_app_val.num_val);
++ 
++        if (p_result->get_cur_app_val.num_val > AVRC_MAX_APP_ATTR_SIZE) {
++          android_errorWriteLog(0x534e4554, "63146237");
++          p_result->get_cur_app_val.num_val = AVRC_MAX_APP_ATTR_SIZE;
++        }
++
+         for (int xx = 0; xx < p_result->get_cur_app_val.num_val; xx++)
+         {
+             BE_STREAM_TO_UINT8(app_sett[xx].attr_id, p);
+@@ -269,7 +282,6 @@ static tAVRC_STS avrc_ctrl_pars_vendor_rsp(
+ 
+     case AVRC_PDU_GET_PLAYER_APP_ATTR_TEXT:
+     {
+-        tAVRC_APP_SETTING_TEXT   *p_setting_text;
+         UINT8                    num_attrs;
+ 
+         if (len == 0)
+@@ -278,9 +290,12 @@ static tAVRC_STS avrc_ctrl_pars_vendor_rsp(
+             break;
+         }
+         BE_STREAM_TO_UINT8(num_attrs, p);
++        if (num_attrs > AVRC_MAX_APP_ATTR_SIZE) {
++            num_attrs = AVRC_MAX_APP_ATTR_SIZE;
++        }
+         AVRC_TRACE_DEBUG("%s attr count = %d ", __func__, p_result->get_app_attr_txt.num_attr);
+         p_result->get_app_attr_txt.num_attr = num_attrs;
+-        p_setting_text = (tAVRC_APP_SETTING_TEXT*)osi_malloc(num_attrs * sizeof(tAVRC_APP_SETTING_TEXT));
++        p_result->get_app_attr_txt.p_attrs = (tAVRC_APP_SETTING_TEXT*)osi_malloc(num_attrs * sizeof(tAVRC_APP_SETTING_TEXT));
+         for (int xx = 0; xx < num_attrs; xx++)
+         {
+             BE_STREAM_TO_UINT8(p_result->get_app_attr_txt.p_attrs[xx].attr_id, p);
+@@ -300,7 +315,6 @@ static tAVRC_STS avrc_ctrl_pars_vendor_rsp(
+ 
+     case AVRC_PDU_GET_PLAYER_APP_VALUE_TEXT:
+     {
+-        tAVRC_APP_SETTING_TEXT   *p_setting_text;
+         UINT8                    num_vals;
+ 
+         if (len == 0)
+@@ -309,10 +323,13 @@ static tAVRC_STS avrc_ctrl_pars_vendor_rsp(
+             break;
+         }
+         BE_STREAM_TO_UINT8(num_vals, p);
++        if (num_vals > AVRC_MAX_APP_ATTR_SIZE) {
++            num_vals = AVRC_MAX_APP_ATTR_SIZE;
++        }
+         p_result->get_app_val_txt.num_attr = num_vals;
+         AVRC_TRACE_DEBUG("%s value count = %d ", __func__, p_result->get_app_val_txt.num_attr);
+ 
+-        p_setting_text = (tAVRC_APP_SETTING_TEXT *)osi_malloc(num_vals * sizeof(tAVRC_APP_SETTING_TEXT));
++        p_result->get_app_val_txt.p_attrs = (tAVRC_APP_SETTING_TEXT *)osi_malloc(num_vals * sizeof(tAVRC_APP_SETTING_TEXT));
+         for (int i = 0; i < num_vals; i++) {
+             BE_STREAM_TO_UINT8(p_result->get_app_val_txt.p_attrs[i].attr_id, p);
+             BE_STREAM_TO_UINT16(p_result->get_app_val_txt.p_attrs[i].charset_id, p);
+diff --git a/stack/avrc/avrc_pars_tg.c b/stack/avrc/avrc_pars_tg.c
+index 3f3fe938..63f74b66 100644
+--- a/stack/avrc/avrc_pars_tg.c
++++ b/stack/avrc/avrc_pars_tg.c
+@@ -21,6 +21,7 @@
+ #include "avrc_api.h"
+ #include "avrc_defs.h"
+ #include "avrc_int.h"
++#include "log/log.h"
+ 
+ /*****************************************************************************
+ **  Global data
+@@ -169,6 +170,12 @@ static tAVRC_STS avrc_pars_vendor_cmd(tAVRC_MSG_VENDOR *p_msg, tAVRC_COMMAND *p_
+             status = AVRC_STS_INTERNAL_ERR;
+             break;
+         }
++
++        if (p_result->get_cur_app_val.num_attr > AVRC_MAX_APP_ATTR_SIZE) {
++            android_errorWriteLog(0x534e4554, "63146237");
++            p_result->get_cur_app_val.num_attr = AVRC_MAX_APP_ATTR_SIZE;
++        }
++
+         p_u8 = p_result->get_cur_app_val.attrs;
+         for (xx=0, yy=0; xx< p_result->get_cur_app_val.num_attr; xx++)
+         {
+@@ -229,6 +236,11 @@ static tAVRC_STS avrc_pars_vendor_cmd(tAVRC_MSG_VENDOR *p_msg, tAVRC_COMMAND *p_
+                     status = AVRC_STS_INTERNAL_ERR;
+                 else
+                 {
++                    if (p_result->get_app_val_txt.num_val > AVRC_MAX_APP_ATTR_SIZE) {
++                      android_errorWriteLog(0x534e4554, "63146237");
++                      p_result->get_app_val_txt.num_val = AVRC_MAX_APP_ATTR_SIZE;
++                    }
++       
+                     p_u8 = p_result->get_app_val_txt.vals;
+                     for (xx=0; xx< p_result->get_app_val_txt.num_val; xx++)
+                     {
+diff --git a/stack/bnep/bnep_main.c b/stack/bnep/bnep_main.c
+index 36b76a1e..3560d46b 100644
+--- a/stack/bnep/bnep_main.c
++++ b/stack/bnep/bnep_main.c
+@@ -35,6 +35,7 @@
+ 
+ #include "l2c_api.h"
+ #include "l2cdefs.h"
++#include "log/log.h"
+ 
+ #include "btu.h"
+ #include "btm_api.h"
+@@ -495,6 +496,12 @@ static void bnep_data_ind (UINT16 l2cap_cid, BT_HDR *p_buf)
+     type = *p++;
+     extension_present = type >> 7;
+     type &= 0x7f;
++    if (type >= sizeof(bnep_frame_hdr_sizes) / sizeof(bnep_frame_hdr_sizes[0])) {
++        BNEP_TRACE_EVENT("BNEP - rcvd frame, bad type: 0x%02x", type);
++        android_errorWriteLog(0x534e4554, "68818034");
++        osi_free(p_buf);
++        return;
++    }
+     if ((rem_len <= bnep_frame_hdr_sizes[type]) || (rem_len > BNEP_MTU_SIZE))
+     {
+         BNEP_TRACE_EVENT ("BNEP - rcvd frame, bad len: %d  type: 0x%02x", p_buf->len, type);
+@@ -524,20 +531,21 @@ static void bnep_data_ind (UINT16 l2cap_cid, BT_HDR *p_buf)
+             org_len = rem_len;
+             new_len = 0;
+             do {
+-
++		if (org_len < 2) break;
+                 ext     = *p++;
+                 length  = *p++;
+                 p += length;
+ 
++                new_len = (length + 2);
++                if (new_len > org_len) break;
++
+                 if ((!(ext & 0x7F)) && (*p > BNEP_FILTER_MULTI_ADDR_RESPONSE_MSG))
+                     bnep_send_command_not_understood (p_bcb, *p);
+ 
+-                new_len += (length + 2);
+-
+-                if (new_len > org_len)
+-                    break;
++		org_len -= new_len;
+ 
+             } while (ext & 0x80);
++            android_errorWriteLog(0x534e4554, "67863755");
+         }
+ 
+         osi_free(p_buf);
+@@ -586,6 +594,8 @@ static void bnep_data_ind (UINT16 l2cap_cid, BT_HDR *p_buf)
+             while (extension_present && p && rem_len)
+             {
+                 ext_type = *p++;
++                rem_len--;
++                android_errorWriteLog(0x534e4554, "69271284");
+                 extension_present = ext_type >> 7;
+                 ext_type &= 0x7F;
+ 
+@@ -657,6 +667,7 @@ static void bnep_data_ind (UINT16 l2cap_cid, BT_HDR *p_buf)
+     if (bnep_cb.p_data_buf_cb)
+     {
+         (*bnep_cb.p_data_buf_cb)(p_bcb->handle, p_src_addr, p_dst_addr, protocol, p_buf, fw_ext_present);
++	osi_free(p_buf);
+     }
+     else if (bnep_cb.p_data_ind_cb)
+     {
+diff --git a/stack/bnep/bnep_utils.c b/stack/bnep/bnep_utils.c
+index e16ffcad..a935db5a 100644
+--- a/stack/bnep/bnep_utils.c
++++ b/stack/bnep/bnep_utils.c
+@@ -22,6 +22,7 @@
+  *
+  ******************************************************************************/
+ 
++#include <cutils/log.h>
+ #include <stdio.h>
+ #include <string.h>
+ #include "bt_common.h"
+diff --git a/stack/btu/btu_init.c b/stack/btu/btu_init.c
+index 688ed889..9f9ed0a5 100644
+--- a/stack/btu/btu_init.c
++++ b/stack/btu/btu_init.c
+@@ -115,6 +115,8 @@ void btu_free_core(void)
+       /* Free the mandatory core stack components */
+       l2c_free();
+ 
++      sdp_free();
++
+ #if BLE_INCLUDED == TRUE
+       gatt_free();
+ #endif
+diff --git a/stack/pan/pan_main.c b/stack/pan/pan_main.c
+index 74a75ecd..2acd1509 100644
+--- a/stack/pan/pan_main.c
++++ b/stack/pan/pan_main.c
+@@ -227,15 +227,15 @@ void pan_conn_ind_cb (UINT16 handle,
+      * For reference, see Table 1 in PAN Profile v1.0 spec.
+      * Note: the remote is the initiator.
+      */
+-    BOOLEAN is_valid_interaction = FALSE;
++    bool is_valid_interaction = false;
+     switch (remote_uuid->uu.uuid16) {
+-    case UUID_SERVCLASS_NAP:
+-    case UUID_SERVCLASS_GN:
+-        if (local_uuid->uu.uuid16 == UUID_SERVCLASS_PANU)
+-            is_valid_interaction = TRUE;
++      case UUID_SERVCLASS_NAP:
++      case UUID_SERVCLASS_GN:
++         if (local_uuid->uu.uuid16 == UUID_SERVCLASS_PANU)
++          is_valid_interaction = true;
+         break;
+-    case UUID_SERVCLASS_PANU:
+-        is_valid_interaction = TRUE;
++      case UUID_SERVCLASS_PANU:
++        is_valid_interaction = true;
+         break;
+     }
+     /*
+diff --git a/stack/sdp/sdp_main.c b/stack/sdp/sdp_main.c
+index c8888179..7cbe2d37 100644
+--- a/stack/sdp/sdp_main.c
++++ b/stack/sdp/sdp_main.c
+@@ -85,6 +85,10 @@ void sdp_init (void)
+     /* Clears all structures and local SDP database (if Server is enabled) */
+     memset (&sdp_cb, 0, sizeof (tSDP_CB));
+ 
++    for (int i = 0; i < SDP_MAX_CONNECTIONS; i++) {
++        sdp_cb.ccb[i].sdp_conn_timer = alarm_new("sdp.sdp_conn_timer");
++    }
++
+     /* Initialize the L2CAP configuration. We only care about MTU and flush */
+     sdp_cb.l2cap_my_cfg.mtu_present       = TRUE;
+     sdp_cb.l2cap_my_cfg.mtu               = SDP_MTU_SIZE;
+@@ -139,6 +143,13 @@ void sdp_init (void)
+     }
+ }
+ 
++void sdp_free(void) {
++    for (int i = 0; i < SDP_MAX_CONNECTIONS; i++) {
++        alarm_free(sdp_cb.ccb[i].sdp_conn_timer);
++        sdp_cb.ccb[i].sdp_conn_timer = NULL;
++    }
++}
++
+ #if (defined(SDP_DEBUG) && SDP_DEBUG == TRUE)
+ /*******************************************************************************
+ **
+diff --git a/stack/sdp/sdp_server.c b/stack/sdp/sdp_server.c
+index 5b0bde43..5121e0e0 100644
+--- a/stack/sdp/sdp_server.c
++++ b/stack/sdp/sdp_server.c
+@@ -23,6 +23,7 @@
+  *
+  ******************************************************************************/
+ 
++#include <cutils/log.h>
+ #include <stdlib.h>
+ #include <string.h>
+ #include <stdio.h>
+@@ -126,11 +127,25 @@ void sdp_server_handle_client_req (tCONN_CB *p_ccb, BT_HDR *p_msg)
+     alarm_set_on_queue(p_ccb->sdp_conn_timer, SDP_INACT_TIMEOUT_MS,
+                        sdp_conn_timer_timeout, p_ccb, btu_general_alarm_queue);
+ 
++    if (p_req + sizeof(pdu_id) + sizeof(trans_num) > p_req_end) {
++        android_errorWriteLog(0x534e4554, "69384124");
++        trans_num = 0;
++        sdpu_build_n_send_error(p_ccb, trans_num, SDP_INVALID_REQ_SYNTAX,
++                                SDP_TEXT_BAD_HEADER);
++    }
++
+     /* The first byte in the message is the pdu type */
+     pdu_id = *p_req++;
+ 
+     /* Extract the transaction number and parameter length */
+     BE_STREAM_TO_UINT16 (trans_num, p_req);
++
++    if (p_req + sizeof(param_len) > p_req_end) {
++        android_errorWriteLog(0x534e4554, "69384124");
++        sdpu_build_n_send_error(p_ccb, trans_num, SDP_INVALID_REQ_SYNTAX,
++                                SDP_TEXT_BAD_HEADER);
++    }
++
+     BE_STREAM_TO_UINT16 (param_len, p_req);
+ 
+     if ((p_req + param_len) != p_req_end)
+@@ -195,17 +210,14 @@ static void process_service_search (tCONN_CB *p_ccb, UINT16 trans_num,
+     }
+ 
+     /* Get the max replies we can send. Cap it at our max anyways. */
+-    BE_STREAM_TO_UINT16 (max_replies, p_req);
+-
+-    if (max_replies > SDP_MAX_RECORDS)
+-        max_replies = SDP_MAX_RECORDS;
+-
+-
+-    if ((!p_req) || (p_req > p_req_end))
+-    {
++    if (p_req + sizeof(max_replies) + sizeof(uint8_t) > p_req_end) {
++        android_errorWriteLog(0x534e4554, "69384124");
+         sdpu_build_n_send_error (p_ccb, trans_num, SDP_INVALID_REQ_SYNTAX, SDP_TEXT_BAD_MAX_RECORDS_LIST);
+         return;
+     }
++    BE_STREAM_TO_UINT16(max_replies, p_req);
++
++    if (max_replies > SDP_MAX_RECORDS) max_replies = SDP_MAX_RECORDS;
+ 
+ 
+     /* Get a list of handles that match the UUIDs given to us */
+@@ -327,15 +339,15 @@ static void process_service_attr_req (tCONN_CB *p_ccb, UINT16 trans_num,
+     BOOLEAN         is_cont = FALSE;
+     UINT16          attr_len;
+ 
+-    /* Extract the record handle */
+-    BE_STREAM_TO_UINT32 (rec_handle, p_req);
+-
+-    if (p_req > p_req_end)
+-    {
++    if (p_req + sizeof(rec_handle) + sizeof(max_list_len) > p_req_end) {
++        android_errorWriteLog(0x534e4554, "69384124");
+         sdpu_build_n_send_error (p_ccb, trans_num, SDP_INVALID_SERV_REC_HDL, SDP_TEXT_BAD_HANDLE);
+         return;
+     }
+ 
++    /* Extract the record handle */
++    BE_STREAM_TO_UINT32(rec_handle, p_req);
++
+     /* Get the max list length we can send. Cap it at MTU size minus overhead */
+     BE_STREAM_TO_UINT16 (max_list_len, p_req);
+ 
+@@ -344,8 +356,8 @@ static void process_service_attr_req (tCONN_CB *p_ccb, UINT16 trans_num,
+ 
+     p_req = sdpu_extract_attr_seq (p_req, param_len, &attr_seq);
+ 
+-    if ((!p_req) || (!attr_seq.num_attr) || (p_req > p_req_end))
+-    {
++    if ((!p_req) || (!attr_seq.num_attr) ||
++        (p_req + sizeof(uint8_t) > p_req_end)) {
+         sdpu_build_n_send_error (p_ccb, trans_num, SDP_INVALID_REQ_SYNTAX, SDP_TEXT_BAD_ATTR_LIST);
+         return;
+     }
+@@ -360,13 +372,19 @@ static void process_service_attr_req (tCONN_CB *p_ccb, UINT16 trans_num,
+         return;
+     }
+ 
++    if (max_list_len < 4) {
++        sdpu_build_n_send_error(p_ccb, trans_num, SDP_ILLEGAL_PARAMETER, NULL);
++        return;
++    }
++
+     /* Free and reallocate buffer */
+     osi_free(p_ccb->rsp_list);
+     p_ccb->rsp_list = (UINT8 *)osi_malloc(max_list_len);
+ 
+     /* Check if this is a continuation request */
+     if (*p_req) {
+-        if (*p_req++ != SDP_CONTINUATION_LEN) {
++        if (*p_req++ != SDP_CONTINUATION_LEN ||
++            (p_req + sizeof(cont_offset) > p_req_end)) {
+             sdpu_build_n_send_error(p_ccb, trans_num, SDP_INVALID_CONT_STATE,
+                                     SDP_TEXT_BAD_CONT_LEN);
+             return;
+@@ -562,8 +580,8 @@ static void process_service_search_attr_req (tCONN_CB *p_ccb, UINT16 trans_num,
+     /* Extract the UUID sequence to search for */
+     p_req = sdpu_extract_uid_seq (p_req, param_len, &uid_seq);
+ 
+-    if ((!p_req) || (!uid_seq.num_uids))
+-    {
++    if ((!p_req) || (!uid_seq.num_uids) ||
++        (p_req + sizeof(uint16_t) > p_req_end)) {
+         sdpu_build_n_send_error (p_ccb, trans_num, SDP_INVALID_REQ_SYNTAX, SDP_TEXT_BAD_UUID_LIST);
+         return;
+     }
+@@ -576,21 +594,27 @@ static void process_service_search_attr_req (tCONN_CB *p_ccb, UINT16 trans_num,
+ 
+     p_req = sdpu_extract_attr_seq (p_req, param_len, &attr_seq);
+ 
+-    if ((!p_req) || (!attr_seq.num_attr))
+-    {
++    if ((!p_req) || (!attr_seq.num_attr) ||
++        (p_req + sizeof(uint8_t) > p_req_end)) {
+         sdpu_build_n_send_error (p_ccb, trans_num, SDP_INVALID_REQ_SYNTAX, SDP_TEXT_BAD_ATTR_LIST);
+         return;
+     }
+ 
+     memcpy(&attr_seq_sav, &attr_seq, sizeof(tSDP_ATTR_SEQ)) ;
+ 
++    if (max_list_len < 4) {
++        sdpu_build_n_send_error(p_ccb, trans_num, SDP_ILLEGAL_PARAMETER, NULL);
++        return;
++    }
++
+     /* Free and reallocate buffer */
+     osi_free(p_ccb->rsp_list);
+     p_ccb->rsp_list = (UINT8 *)osi_malloc(max_list_len);
+ 
+     /* Check if this is a continuation request */
+     if (*p_req) {
+-        if (*p_req++ != SDP_CONTINUATION_LEN) {
++        if (*p_req++ != SDP_CONTINUATION_LEN ||
++            (p_req + sizeof(uint16_t) > p_req_end)) {
+             sdpu_build_n_send_error(p_ccb, trans_num, SDP_INVALID_CONT_STATE,
+                                     SDP_TEXT_BAD_CONT_LEN);
+             return;
+diff --git a/stack/sdp/sdp_utils.c b/stack/sdp/sdp_utils.c
+index a6f0ba6a..6b503cb7 100644
+--- a/stack/sdp/sdp_utils.c
++++ b/stack/sdp/sdp_utils.c
+@@ -120,8 +120,9 @@ tCONN_CB *sdpu_allocate_ccb (void)
+     {
+         if (p_ccb->con_state == SDP_STATE_IDLE)
+         {
++            alarm_t* alarm = p_ccb->sdp_conn_timer;
+             memset(p_ccb, 0, sizeof(tCONN_CB));
+-            p_ccb->sdp_conn_timer = alarm_new("sdp.sdp_conn_timer");
++            p_ccb->sdp_conn_timer = alarm;
+             return (p_ccb);
+         }
+     }
+@@ -143,8 +144,7 @@ tCONN_CB *sdpu_allocate_ccb (void)
+ void sdpu_release_ccb (tCONN_CB *p_ccb)
+ {
+     /* Ensure timer is stopped */
+-    alarm_free(p_ccb->sdp_conn_timer);
+-    p_ccb->sdp_conn_timer = NULL;
++    alarm_cancel(p_ccb->sdp_conn_timer);
+ 
+     /* Drop any response pointer we may be holding */
+     p_ccb->con_state = SDP_STATE_IDLE;
+@@ -369,6 +369,8 @@ UINT8 *sdpu_extract_uid_seq (UINT8 *p, UINT16 param_len, tSDP_UUID_SEQ *p_seq)
+     p_seq->num_uids = 0;
+ 
+     /* A UID sequence is composed of a bunch of UIDs. */
++    if (sizeof(descr) > param_len) return (NULL);
++    param_len -= sizeof(descr);
+ 
+     BE_STREAM_TO_UINT8 (descr, p);
+     type = descr >> 3;
+@@ -389,19 +391,25 @@ UINT8 *sdpu_extract_uid_seq (UINT8 *p, UINT16 param_len, tSDP_UUID_SEQ *p_seq)
+         seq_len = 16;
+         break;
+     case SIZE_IN_NEXT_BYTE:
++        if (sizeof(uint8_t) > param_len) return (NULL);
++        param_len -= sizeof(uint8_t);
+         BE_STREAM_TO_UINT8 (seq_len, p);
+         break;
+     case SIZE_IN_NEXT_WORD:
++        if (sizeof(uint16_t) > param_len) return (NULL);
++        param_len -= sizeof(uint16_t);
+         BE_STREAM_TO_UINT16 (seq_len, p);
+         break;
+     case SIZE_IN_NEXT_LONG:
++        if (sizeof(uint32_t) > param_len) return (NULL);
++        param_len -= sizeof(uint32_t);
+         BE_STREAM_TO_UINT32 (seq_len, p);
+         break;
+     default:
+         return (NULL);
+     }
+ 
+-    if (seq_len >= param_len)
++    if (seq_len > param_len)
+         return (NULL);
+ 
+     p_seq_end = p + seq_len;
+@@ -428,12 +436,15 @@ UINT8 *sdpu_extract_uid_seq (UINT8 *p, UINT16 param_len, tSDP_UUID_SEQ *p_seq)
+             uuid_len = 16;
+             break;
+         case SIZE_IN_NEXT_BYTE:
++            if (p + sizeof(uint8_t) > p_seq_end) return NULL;
+             BE_STREAM_TO_UINT8 (uuid_len, p);
+             break;
+         case SIZE_IN_NEXT_WORD:
++            if (p + sizeof(uint16_t) > p_seq_end) return NULL;
+             BE_STREAM_TO_UINT16 (uuid_len, p);
+             break;
+         case SIZE_IN_NEXT_LONG:
++            if (p + sizeof(uint32_t) > p_seq_end) return NULL;
+             BE_STREAM_TO_UINT32 (uuid_len, p);
+             break;
+         default:
+@@ -441,8 +452,8 @@ UINT8 *sdpu_extract_uid_seq (UINT8 *p, UINT16 param_len, tSDP_UUID_SEQ *p_seq)
+         }
+ 
+         /* If UUID length is valid, copy it across */
+-        if ((uuid_len == 2) || (uuid_len == 4) || (uuid_len == 16))
+-        {
++        if (((uuid_len == 2) || (uuid_len == 4) || (uuid_len == 16)) &&
++            (p + uuid_len <= p_seq_end)) {
+             p_seq->uuid_entry[p_seq->num_uids].len = (UINT16) uuid_len;
+             BE_STREAM_TO_ARRAY (p, p_seq->uuid_entry[p_seq->num_uids].value, (int)uuid_len);
+             p_seq->num_uids++;
+@@ -483,33 +494,41 @@ UINT8 *sdpu_extract_attr_seq (UINT8 *p, UINT16 param_len, tSDP_ATTR_SEQ *p_seq)
+     p_seq->num_attr = 0;
+ 
+     /* Get attribute sequence info */
++    if (param_len < sizeof(descr)) return NULL;
++    param_len -= sizeof(descr);
+     BE_STREAM_TO_UINT8 (descr, p);
+     type = descr >> 3;
+     size = descr & 7;
+ 
+     if (type != DATA_ELE_SEQ_DESC_TYPE)
+-        return (p);
++        return NULL;
+ 
+     switch (size)
+     {
+     case SIZE_IN_NEXT_BYTE:
++        if (param_len < sizeof(uint8_t)) return NULL;
++        param_len -= sizeof(uint8_t);
+         BE_STREAM_TO_UINT8 (list_len, p);
+         break;
+ 
+     case SIZE_IN_NEXT_WORD:
++        if (param_len < sizeof(uint16_t)) return NULL;
++        param_len -= sizeof(uint16_t);
+         BE_STREAM_TO_UINT16 (list_len, p);
+         break;
+ 
+     case SIZE_IN_NEXT_LONG:
++        if (param_len < sizeof(uint32_t)) return NULL;
++        param_len -= sizeof(uint32_t);
+         BE_STREAM_TO_UINT32 (list_len, p);
+         break;
+ 
+     default:
+-        return (p);
++        return NULL;
+     }
+ 
+     if (list_len > param_len)
+-        return (p);
++        return NULL;
+ 
+     p_end_list = p + list_len;
+ 
+@@ -521,7 +540,7 @@ UINT8 *sdpu_extract_attr_seq (UINT8 *p, UINT16 param_len, tSDP_ATTR_SEQ *p_seq)
+         size = descr & 7;
+ 
+         if (type != UINT_DESC_TYPE)
+-            return (p);
++            return NULL;
+ 
+         switch (size)
+         {
+@@ -532,20 +551,24 @@ UINT8 *sdpu_extract_attr_seq (UINT8 *p, UINT16 param_len, tSDP_ATTR_SEQ *p_seq)
+             attr_len = 4;
+             break;
+         case SIZE_IN_NEXT_BYTE:
++            if (p + sizeof(uint8_t) > p_end_list) return NULL;
+             BE_STREAM_TO_UINT8 (attr_len, p);
+             break;
+         case SIZE_IN_NEXT_WORD:
++            if (p + sizeof(uint16_t) > p_end_list) return NULL;
+             BE_STREAM_TO_UINT16 (attr_len, p);
+             break;
+         case SIZE_IN_NEXT_LONG:
++            if (p + sizeof(uint32_t) > p_end_list) return NULL;
+             BE_STREAM_TO_UINT32 (attr_len, p);
+             break;
+         default:
+-            return (NULL);
++            return NULL;
+             break;
+         }
+ 
+         /* Attribute length must be 2-bytes or 4-bytes for a paired entry. */
++        if (p + attr_len > p_end_list) return NULL;
+         if (attr_len == 2)
+         {
+             BE_STREAM_TO_UINT16 (p_seq->attr_entry[p_seq->num_attr].start, p);
+diff --git a/stack/sdp/sdpint.h b/stack/sdp/sdpint.h
+index 05414cd3..71dab926 100644
+--- a/stack/sdp/sdpint.h
++++ b/stack/sdp/sdpint.h
+@@ -246,6 +246,7 @@ extern tSDP_CB *sdp_cb_ptr;
+ 
+ /* Functions provided by sdp_main.c */
+ extern void     sdp_init (void);
++extern void     sdp_free(void);
+ extern void     sdp_disconnect (tCONN_CB*p_ccb, UINT16 reason);
+ 
+ #if (defined(SDP_DEBUG) && SDP_DEBUG == TRUE)
+diff --git a/stack/smp/smp_utils.c b/stack/smp/smp_utils.c
+index a7357db0..93c9a238 100644
+--- a/stack/smp/smp_utils.c
++++ b/stack/smp/smp_utils.c
+@@ -297,8 +297,7 @@ BOOLEAN  smp_send_msg_to_L2CAP(BD_ADDR rem_bda, BT_HDR *p_toL2CAP)
+     if ((l2cap_ret = L2CA_SendFixedChnlData (fixed_cid, rem_bda, p_toL2CAP)) == L2CAP_DW_FAILED)
+     {
+         smp_cb.total_tx_unacked -= 1;
+-        SMP_TRACE_ERROR("SMP   failed to pass msg:0x%0x to L2CAP",
+-                         *((UINT8 *)(p_toL2CAP + 1) + p_toL2CAP->offset));
++	SMP_TRACE_ERROR("SMP failed to pass msg to L2CAP");
+         return FALSE;
+     }
+     else

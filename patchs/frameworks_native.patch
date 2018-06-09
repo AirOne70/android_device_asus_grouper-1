@@ -1,0 +1,1023 @@
+diff --git a/cmds/installd/commands.cpp b/cmds/installd/commands.cpp
+index 1a0185f93..0b25da1d7 100644
+--- a/cmds/installd/commands.cpp
++++ b/cmds/installd/commands.cpp
+@@ -238,11 +238,15 @@ int migrate_app_data(const char *uuid, const char *pkgname, userid_t userid, int
+     auto ce_path = create_data_user_ce_package_path(uuid, userid, pkgname);
+     auto de_path = create_data_user_de_package_path(uuid, userid, pkgname);
+ 
+-    // If neither directory is marked as default, assume CE is default
++    // If neither directory is marked as default, use DE if requested by
++    // the app (and it exists), otherwise assume CE.
+     if (getxattr(ce_path.c_str(), kXattrDefault, nullptr, 0) == -1
+             && getxattr(de_path.c_str(), kXattrDefault, nullptr, 0) == -1) {
+-        if (setxattr(ce_path.c_str(), kXattrDefault, nullptr, 0, 0) != 0) {
+-            PLOG(ERROR) << "Failed to mark default storage " << ce_path;
++        struct stat s;
++        const char *data_path = (flags & FLAG_STORAGE_DE) && !stat(de_path.c_str(), &s)
++                ? de_path.c_str() : ce_path.c_str();
++        if (setxattr(data_path, kXattrDefault, nullptr, 0, 0) != 0) {
++            PLOG(ERROR) << "Failed to mark default storage " << data_path;
+             return -1;
+         }
+     }
+diff --git a/include/gui/ISurfaceComposer.h b/include/gui/ISurfaceComposer.h
+index 74a4123bb..8dc6f6a9d 100644
+--- a/include/gui/ISurfaceComposer.h
++++ b/include/gui/ISurfaceComposer.h
+@@ -32,6 +32,12 @@
+ #include <gui/IGraphicBufferAlloc.h>
+ #include <gui/ISurfaceComposerClient.h>
+ 
++#ifndef FORCE_SCREENSHOT_CPU_PATH
++#define SS_CPU_CONSUMER false
++#else
++#define SS_CPU_CONSUMER true
++#endif
++
+ namespace android {
+ // ----------------------------------------------------------------------------
+ 
+@@ -151,7 +157,8 @@ public:
+             Rect sourceCrop, uint32_t reqWidth, uint32_t reqHeight,
+             uint32_t minLayerZ, uint32_t maxLayerZ,
+             bool useIdentityTransform,
+-            Rotation rotation = eRotateNone) = 0;
++            Rotation rotation = eRotateNone,
++            bool isCpuConsumer = SS_CPU_CONSUMER) = 0;
+ 
+     /* Clears the frame statistics for animations.
+      *
+diff --git a/libs/binder/AppOpsManager.cpp b/libs/binder/AppOpsManager.cpp
+index 9a061a0ce..8f97544d5 100644
+--- a/libs/binder/AppOpsManager.cpp
++++ b/libs/binder/AppOpsManager.cpp
+@@ -53,7 +53,8 @@ sp<IAppOpsService> AppOpsManager::getService()
+                 ALOGI("Waiting for app ops service");
+             } else if ((uptimeMillis()-startTime) > 10000) {
+                 ALOGW("Waiting too long for app ops service, giving up");
+-                return NULL;
++                service = NULL;
++                break;
+             }
+             sleep(1);
+         } else {
+diff --git a/libs/binder/Binder.cpp b/libs/binder/Binder.cpp
+index c4d47caed..d04074eed 100644
+--- a/libs/binder/Binder.cpp
++++ b/libs/binder/Binder.cpp
+@@ -240,6 +240,8 @@ status_t BBinder::onTransact(
+             if (resultReceiver != NULL) {
+                 resultReceiver->send(INVALID_OPERATION);
+             }
++
++            return NO_ERROR;
+         }
+ 
+         case SYSPROPS_TRANSACTION: {
+diff --git a/libs/binder/IPCThreadState.cpp b/libs/binder/IPCThreadState.cpp
+index eccc400c0..3efebf7ea 100644
+--- a/libs/binder/IPCThreadState.cpp
++++ b/libs/binder/IPCThreadState.cpp
+@@ -331,6 +331,7 @@ void IPCThreadState::shutdown()
+             delete st;
+             pthread_setspecific(gTLS, NULL);
+         }
++        pthread_key_delete(gTLS);
+         gHaveTLS = false;
+     }
+ }
+diff --git a/libs/binder/ProcessState.cpp b/libs/binder/ProcessState.cpp
+index 244fa9e49..1640b77e4 100644
+--- a/libs/binder/ProcessState.cpp
++++ b/libs/binder/ProcessState.cpp
+@@ -364,6 +364,13 @@ ProcessState::ProcessState()
+ 
+ ProcessState::~ProcessState()
+ {
++    if (mDriverFD >= 0) {
++        if (mVMStart != MAP_FAILED) {
++            munmap(mVMStart, BINDER_VM_SIZE);
++        }
++        close(mDriverFD);
++    }
++    mDriverFD = -1;
+ }
+         
+ }; // namespace android
+diff --git a/libs/gui/Android.mk b/libs/gui/Android.mk
+index 9e2fc2b04..12d21488e 100644
+--- a/libs/gui/Android.mk
++++ b/libs/gui/Android.mk
+@@ -86,6 +86,9 @@ LOCAL_SHARED_LIBRARIES := \
+ 	libutils \
+ 	liblog
+ 
++ifeq ($(TARGET_FORCE_SCREENSHOT_CPU_PATH),true)
++    LOCAL_CFLAGS += -DFORCE_SCREENSHOT_CPU_PATH
++endif
+ 
+ LOCAL_MODULE := libgui
+ 
+diff --git a/libs/gui/BufferQueueProducer.cpp b/libs/gui/BufferQueueProducer.cpp
+index ff85eb5ce..6dc7fec34 100644
+--- a/libs/gui/BufferQueueProducer.cpp
++++ b/libs/gui/BufferQueueProducer.cpp
+@@ -721,6 +721,7 @@ status_t BufferQueueProducer::attachBuffer(int* outSlot,
+     mSlots[*outSlot].mFence = Fence::NO_FENCE;
+     mSlots[*outSlot].mRequestBufferCalled = true;
+     mSlots[*outSlot].mAcquireCalled = false;
++    mSlots[*outSlot].mNeedsReallocation = false;
+     mCore->mActiveBuffers.insert(found);
+     VALIDATE_CONSISTENCY();
+ 
+@@ -1279,6 +1280,13 @@ void BufferQueueProducer::allocateBuffers(uint32_t width, uint32_t height,
+             allocFormat = format != 0 ? format : mCore->mDefaultBufferFormat;
+             allocUsage = usage | mCore->mConsumerUsageBits;
+ 
++            // If mTransformHint is set, the EGL implementation will request buffers
++            // with pre-rotated size. So here we need to swap the width and height
++            // to avoid the buffers being freed and reallocated when dequeueBuffer()
++            // gets called later.
++            if (mCore->mTransformHint != 0) {
++                std::swap(allocWidth, allocHeight);
++            }
+             mCore->mIsAllocating = true;
+         } // Autolock scope
+ 
+@@ -1303,6 +1311,9 @@ void BufferQueueProducer::allocateBuffers(uint32_t width, uint32_t height,
+             Mutex::Autolock lock(mCore->mMutex);
+             uint32_t checkWidth = width > 0 ? width : mCore->mDefaultWidth;
+             uint32_t checkHeight = height > 0 ? height : mCore->mDefaultHeight;
++            if (mCore->mTransformHint != 0) {
++                std::swap(checkWidth, checkHeight);
++            }
+             PixelFormat checkFormat = format != 0 ?
+                     format : mCore->mDefaultBufferFormat;
+             uint32_t checkUsage = usage | mCore->mConsumerUsageBits;
+diff --git a/libs/gui/ISurfaceComposer.cpp b/libs/gui/ISurfaceComposer.cpp
+index f0b0ada27..3577a331a 100644
+--- a/libs/gui/ISurfaceComposer.cpp
++++ b/libs/gui/ISurfaceComposer.cpp
+@@ -106,7 +106,8 @@ public:
+             Rect sourceCrop, uint32_t reqWidth, uint32_t reqHeight,
+             uint32_t minLayerZ, uint32_t maxLayerZ,
+             bool useIdentityTransform,
+-            ISurfaceComposer::Rotation rotation)
++            ISurfaceComposer::Rotation rotation,
++            bool isCpuConsumer)
+     {
+         Parcel data, reply;
+         data.writeInterfaceToken(ISurfaceComposer::getInterfaceDescriptor());
+@@ -119,6 +120,7 @@ public:
+         data.writeUint32(maxLayerZ);
+         data.writeInt32(static_cast<int32_t>(useIdentityTransform));
+         data.writeInt32(static_cast<int32_t>(rotation));
++        data.writeInt32(isCpuConsumer);
+         remote()->transact(BnSurfaceComposer::CAPTURE_SCREEN, data, &reply);
+         return reply.readInt32();
+     }
+@@ -462,11 +464,12 @@ status_t BnSurfaceComposer::onTransact(
+             uint32_t maxLayerZ = data.readUint32();
+             bool useIdentityTransform = static_cast<bool>(data.readInt32());
+             int32_t rotation = data.readInt32();
+-
++            bool isCpuConsumer = data.readInt32();
+             status_t res = captureScreen(display, producer,
+                     sourceCrop, reqWidth, reqHeight, minLayerZ, maxLayerZ,
+                     useIdentityTransform,
+-                    static_cast<ISurfaceComposer::Rotation>(rotation));
++                    static_cast<ISurfaceComposer::Rotation>(rotation),
++                    isCpuConsumer);
+             reply->writeInt32(res);
+             return NO_ERROR;
+         }
+diff --git a/libs/gui/Surface.cpp b/libs/gui/Surface.cpp
+index 5a2ca8d7a..16ccbc30e 100644
+--- a/libs/gui/Surface.cpp
++++ b/libs/gui/Surface.cpp
+@@ -1266,6 +1266,7 @@ status_t Surface::lock(
+         }
+ 
+         // figure out if we can copy the frontbuffer back
++        int backBufferSlot(getSlotFromBufferLocked(backBuffer.get()));
+         const sp<GraphicBuffer>& frontBuffer(mPostedBuffer);
+         const bool canCopyBack = (frontBuffer != 0 &&
+                 backBuffer->width  == frontBuffer->width &&
+@@ -1273,15 +1274,23 @@ status_t Surface::lock(
+                 backBuffer->format == frontBuffer->format);
+ 
+         if (canCopyBack) {
+-            // copy the area that is invalid and not repainted this round
+-            const Region copyback(mDirtyRegion.subtract(newDirtyRegion));
++            Mutex::Autolock lock(mMutex);
++            Region oldDirtyRegion;
++            if(mSlots[backBufferSlot].dirtyRegion.isEmpty()) {
++                oldDirtyRegion.set(bounds);
++            } else {
++                for(int i = 0 ; i < NUM_BUFFER_SLOTS; i++ ) {
++                    if(i != backBufferSlot && !mSlots[i].dirtyRegion.isEmpty())
++                        oldDirtyRegion.orSelf(mSlots[i].dirtyRegion);
++                }
++            }
++            const Region copyback(oldDirtyRegion.subtract(newDirtyRegion));
+             if (!copyback.isEmpty())
+                 copyBlt(backBuffer, frontBuffer, copyback);
+         } else {
+             // if we can't copy-back anything, modify the user's dirty
+             // region to make sure they redraw the whole buffer
+             newDirtyRegion.set(bounds);
+-            mDirtyRegion.clear();
+             Mutex::Autolock lock(mMutex);
+             for (size_t i=0 ; i<NUM_BUFFER_SLOTS ; i++) {
+                 mSlots[i].dirtyRegion.clear();
+@@ -1291,15 +1300,9 @@ status_t Surface::lock(
+ 
+         { // scope for the lock
+             Mutex::Autolock lock(mMutex);
+-            int backBufferSlot(getSlotFromBufferLocked(backBuffer.get()));
+-            if (backBufferSlot >= 0) {
+-                Region& dirtyRegion(mSlots[backBufferSlot].dirtyRegion);
+-                mDirtyRegion.subtract(dirtyRegion);
+-                dirtyRegion = newDirtyRegion;
+-            }
++            mSlots[backBufferSlot].dirtyRegion = newDirtyRegion;
+         }
+ 
+-        mDirtyRegion.orSelf(newDirtyRegion);
+         if (inOutDirtyBounds) {
+             *inOutDirtyBounds = newDirtyRegion.getBounds();
+         }
+diff --git a/libs/ui/Android.mk b/libs/ui/Android.mk
+index e690ede19..392703167 100644
+--- a/libs/ui/Android.mk
++++ b/libs/ui/Android.mk
+@@ -36,6 +36,7 @@ LOCAL_CPPFLAGS += -Wno-padded
+ 
+ LOCAL_SRC_FILES := \
+ 	Fence.cpp \
++        FramebufferNativeWindow.cpp \
+ 	FrameStats.cpp \
+ 	Gralloc1.cpp \
+ 	Gralloc1On0Adapter.cpp \
+diff --git a/libs/ui/Region.cpp b/libs/ui/Region.cpp
+index 08850aab3..6b8b1cda5 100644
+--- a/libs/ui/Region.cpp
++++ b/libs/ui/Region.cpp
+@@ -801,6 +801,11 @@ status_t Region::unflatten(void const* buffer, size_t size) {
+         return NO_MEMORY;
+     }
+ 
++    if (numRects > (UINT32_MAX / sizeof(Rect))) {
++        android_errorWriteWithInfoLog(0x534e4554, "29983260", -1, NULL, 0);
++        return NO_MEMORY;
++    }
++
+     Region result;
+     result.mStorage.clear();
+     for (size_t r = 0; r < numRects; ++r) {
+diff --git a/opengl/libs/GLES2/gl2.cpp b/opengl/libs/GLES2/gl2.cpp
+index f1feedaba..5a103ce50 100644
+--- a/opengl/libs/GLES2/gl2.cpp
++++ b/opengl/libs/GLES2/gl2.cpp
+@@ -204,6 +204,9 @@ extern "C" {
+ 
+ #undef API_ENTRY
+ #undef CALL_GL_API
++#undef CALL_GL_API_INTERNAL_CALL
++#undef CALL_GL_API_INTERNAL_SET_RETURN_VALUE
++#undef CALL_GL_API_INTERNAL_DO_RETURN
+ #undef CALL_GL_API_RETURN
+ 
+ /*
+diff --git a/opengl/libs/GLES_CM/gl.cpp b/opengl/libs/GLES_CM/gl.cpp
+index fc7f2e105..8f1b94f8f 100644
+--- a/opengl/libs/GLES_CM/gl.cpp
++++ b/opengl/libs/GLES_CM/gl.cpp
+@@ -259,6 +259,9 @@ extern "C" {
+ 
+ #undef API_ENTRY
+ #undef CALL_GL_API
++#undef CALL_GL_API_INTERNAL_CALL
++#undef CALL_GL_API_INTERNAL_SET_RETURN_VALUE
++#undef CALL_GL_API_INTERNAL_DO_RETURN
+ #undef CALL_GL_API_RETURN
+ 
+ /*
+diff --git a/services/inputflinger/InputReader.cpp b/services/inputflinger/InputReader.cpp
+index bff6a49b9..53ca242c5 100644
+--- a/services/inputflinger/InputReader.cpp
++++ b/services/inputflinger/InputReader.cpp
+@@ -2179,6 +2179,11 @@ void KeyboardInputMapper::configure(nsecs_t when,
+             mOrientation = DISPLAY_ORIENTATION_0;
+         }
+     }
++
++    if (!changes || (changes & InputReaderConfiguration::CHANGE_SWAP_KEYS)) {
++        mSwapKeys = config->swapKeys;
++    }
++
+     if (!changes || (changes & InputReaderConfiguration::CHANGE_VOLUME_KEYS_ROTATION)) {
+         // mode 0 (disabled) ~ offset 4
+         // mode 1 (phone) ~ offset 2
+@@ -2343,10 +2348,27 @@ void KeyboardInputMapper::processKey(nsecs_t when, bool down, int32_t scanCode,
+ 
+     NotifyKeyArgs args(when, getDeviceId(), mSource, policyFlags,
+             down ? AKEY_EVENT_ACTION_DOWN : AKEY_EVENT_ACTION_UP,
+-            AKEY_EVENT_FLAG_FROM_SYSTEM, keyCode, scanCode, keyMetaState, downTime);
++            AKEY_EVENT_FLAG_FROM_SYSTEM, getAdjustedKeyCode(keyCode),
++            scanCode, keyMetaState, downTime);
+     getListener()->notifyKey(&args);
+ }
+ 
++int KeyboardInputMapper::getAdjustedKeyCode(int keyCode) {
++    switch (keyCode) {
++        case AKEYCODE_BACK:
++            if (mSwapKeys) {
++                return AKEYCODE_APP_SWITCH;
++            }
++            break;
++        case AKEYCODE_APP_SWITCH:
++            if (mSwapKeys) {
++                return AKEYCODE_BACK;
++            }
++            break;
++    }
++    return keyCode;
++}
++
+ ssize_t KeyboardInputMapper::findKeyDown(int32_t scanCode) {
+     size_t n = mKeyDowns.size();
+     for (size_t i = 0; i < n; i++) {
+@@ -6668,6 +6690,7 @@ void MultiTouchInputMapper::syncTouch(nsecs_t when, RawState* outState) {
+     size_t inCount = mMultiTouchMotionAccumulator.getSlotCount();
+     size_t outCount = 0;
+     BitSet32 newPointerIdBits;
++    mHavePointerIds = true;
+ 
+     for (size_t inIndex = 0; inIndex < inCount; inIndex++) {
+         const MultiTouchMotionAccumulator::Slot* inSlot =
+@@ -6712,33 +6735,33 @@ void MultiTouchInputMapper::syncTouch(nsecs_t when, RawState* outState) {
+         outPointer.isHovering = isHovering;
+ 
+         // Assign pointer id using tracking id if available.
+-        mHavePointerIds = true;
+-        int32_t trackingId = inSlot->getTrackingId();
+-        int32_t id = -1;
+-        if (trackingId >= 0) {
+-            for (BitSet32 idBits(mPointerIdBits); !idBits.isEmpty(); ) {
+-                uint32_t n = idBits.clearFirstMarkedBit();
+-                if (mPointerTrackingIdMap[n] == trackingId) {
+-                    id = n;
++        if (mHavePointerIds) {
++            int32_t trackingId = inSlot->getTrackingId();
++            int32_t id = -1;
++            if (trackingId >= 0) {
++                for (BitSet32 idBits(mPointerIdBits); !idBits.isEmpty(); ) {
++                    uint32_t n = idBits.clearFirstMarkedBit();
++                    if (mPointerTrackingIdMap[n] == trackingId) {
++                        id = n;
++                    }
+                 }
+-            }
+ 
+-            if (id < 0 && !mPointerIdBits.isFull()) {
+-                id = mPointerIdBits.markFirstUnmarkedBit();
+-                mPointerTrackingIdMap[id] = trackingId;
++                if (id < 0 && !mPointerIdBits.isFull()) {
++                    id = mPointerIdBits.markFirstUnmarkedBit();
++                    mPointerTrackingIdMap[id] = trackingId;
++                }
++            }
++            if (id < 0) {
++                mHavePointerIds = false;
++                outState->rawPointerData.clearIdBits();
++                newPointerIdBits.clear();
++            } else {
++                outPointer.id = id;
++                outState->rawPointerData.idToIndex[id] = outCount;
++                outState->rawPointerData.markIdBit(id, isHovering);
++                newPointerIdBits.markBit(id);
+             }
+         }
+-        if (id < 0) {
+-            mHavePointerIds = false;
+-            outState->rawPointerData.clearIdBits();
+-            newPointerIdBits.clear();
+-        } else {
+-            outPointer.id = id;
+-            outState->rawPointerData.idToIndex[id] = outCount;
+-            outState->rawPointerData.markIdBit(id, isHovering);
+-            newPointerIdBits.markBit(id);
+-        }
+-
+         outCount += 1;
+     }
+ 
+diff --git a/services/inputflinger/InputReader.h b/services/inputflinger/InputReader.h
+index cd01fdb6b..f47e47031 100644
+--- a/services/inputflinger/InputReader.h
++++ b/services/inputflinger/InputReader.h
+@@ -147,6 +147,9 @@ struct InputReaderConfiguration {
+         // Volume keys rotation option changed.
+         CHANGE_VOLUME_KEYS_ROTATION = 1 << 7,
+ 
++        // Swap keys changed.
++        CHANGE_SWAP_KEYS = 1 << 8,
++
+         // All devices must be reopened.
+         CHANGE_MUST_REOPEN = 1 << 31,
+     };
+@@ -238,6 +241,9 @@ struct InputReaderConfiguration {
+     // 0 - disabled, 1 - phone or hybrid rotation mode, 2 - tablet rotation mode
+     int volumeKeysRotationMode;
+ 
++    // Swap back with recents button
++    bool swapKeys;
++
+     InputReaderConfiguration() :
+             virtualKeyQuietTime(0),
+             pointerVelocityControlParameters(1.0f, 500.0f, 3000.0f, 3.0f),
+@@ -1145,6 +1151,8 @@ private:
+     int32_t mRotationMapOffset; // determines if and how volume keys rotate
+     int32_t mOrientation; // orientation for dpad and volume keys
+ 
++    bool mSwapKeys; // swap back with recents button
++
+     Vector<KeyDown> mKeyDowns; // keys that are down
+     int32_t mMetaState;
+     nsecs_t mDownTime; // time of most recent key down
+@@ -1175,6 +1183,8 @@ private:
+ 
+     bool updateMetaStateIfNeeded(int32_t keyCode, bool down);
+ 
++    int getAdjustedKeyCode(int keyCode);
++
+     ssize_t findKeyDown(int32_t scanCode);
+ 
+     void resetLedState();
+diff --git a/services/surfaceflinger/Android.mk b/services/surfaceflinger/Android.mk
+index 00e80909c..4021bd994 100644
+--- a/services/surfaceflinger/Android.mk
++++ b/services/surfaceflinger/Android.mk
+@@ -56,6 +56,9 @@ else
+         DisplayHardware/HWComposer_hwc1.cpp
+ endif
+ 
++ifeq ($(TARGET_FORCE_SCREENSHOT_CPU_PATH),true)
++    LOCAL_CFLAGS += -DFORCE_SCREENSHOT_CPU_PATH
++endif
+ ifeq ($(TARGET_BOARD_PLATFORM),omap4)
+     LOCAL_CFLAGS += -DHAS_CONTEXT_PRIORITY
+ endif
+diff --git a/services/surfaceflinger/DisplayDevice.cpp b/services/surfaceflinger/DisplayDevice.cpp
+index 5c2c0adf3..1f2e554bd 100644
+--- a/services/surfaceflinger/DisplayDevice.cpp
++++ b/services/surfaceflinger/DisplayDevice.cpp
+@@ -166,7 +166,7 @@ DisplayDevice::DisplayDevice(
+     setProjection(DisplayState::eOrientationDefault, mViewport, mFrame);
+ 
+ #ifdef NUM_FRAMEBUFFER_SURFACE_BUFFERS
+-    surface->allocateBuffers();
++    mSurface->allocateBuffers();
+ #endif
+ }
+ 
+diff --git a/services/surfaceflinger/DisplayHardware/HWComposer_hwc1.cpp b/services/surfaceflinger/DisplayHardware/HWComposer_hwc1.cpp
+index 4f63bb8d5..c1fea6040 100644
+--- a/services/surfaceflinger/DisplayHardware/HWComposer_hwc1.cpp
++++ b/services/surfaceflinger/DisplayHardware/HWComposer_hwc1.cpp
+@@ -1260,7 +1260,7 @@ void HWComposer::dump(String8& result) const {
+     }
+ 
+     if (mHwc && mHwc->dump) {
+-        const size_t SIZE = 4096;
++        const size_t SIZE = 16*1024;
+         char buffer[SIZE];
+         mHwc->dump(mHwc, buffer, SIZE);
+         result.append(buffer);
+diff --git a/services/surfaceflinger/DisplayHardware/HWComposer_hwc1.h b/services/surfaceflinger/DisplayHardware/HWComposer_hwc1.h
+index 170e38233..0f0c65d49 100644
+--- a/services/surfaceflinger/DisplayHardware/HWComposer_hwc1.h
++++ b/services/surfaceflinger/DisplayHardware/HWComposer_hwc1.h
+@@ -236,6 +236,9 @@ public:
+         bool operator != (const LayerListIterator& rhs) const {
+             return !operator==(rhs);
+         }
++        bool operator ! () const {
++             return !mLayerList;
++        }
+     };
+ 
+     // Returns an iterator to the beginning of the layer list
+diff --git a/services/surfaceflinger/DisplayHardware/VirtualDisplaySurface.cpp b/services/surfaceflinger/DisplayHardware/VirtualDisplaySurface.cpp
+index 2190466ad..8c36d85ee 100644
+--- a/services/surfaceflinger/DisplayHardware/VirtualDisplaySurface.cpp
++++ b/services/surfaceflinger/DisplayHardware/VirtualDisplaySurface.cpp
+@@ -344,6 +344,13 @@ status_t VirtualDisplaySurface::dequeueBuffer(Source source,
+         PixelFormat format, uint32_t usage, int* sslot, sp<Fence>* fence) {
+     LOG_FATAL_IF(mDisplayId < 0, "mDisplayId=%d but should not be < 0.", mDisplayId);
+ 
++    // Exclude video encoder usage flag from scratch buffer usage flags
++    if (source == SOURCE_SCRATCH) {
++        usage &= ~(GRALLOC_USAGE_HW_VIDEO_ENCODER);
++        VDS_LOGV("dequeueBuffer(%s): updated scratch buffer usage flags=%#x",
++                dbgSourceStr(source), usage);
++    }
++
+     status_t result = mSource[source]->dequeueBuffer(sslot, fence,
+             mSinkBufferWidth, mSinkBufferHeight, format, usage);
+     if (result < 0)
+diff --git a/services/surfaceflinger/RenderEngine/GLES11RenderEngine.cpp b/services/surfaceflinger/RenderEngine/GLES11RenderEngine.cpp
+index 847cdb388..b2821b7d8 100644
+--- a/services/surfaceflinger/RenderEngine/GLES11RenderEngine.cpp
++++ b/services/surfaceflinger/RenderEngine/GLES11RenderEngine.cpp
+@@ -92,14 +92,29 @@ void GLES11RenderEngine::setViewportAndProjection(
+         case Transform::ROT_0:
+             break;
+         case Transform::ROT_90:
+-            glRotatef(90, 0, 0, 1);
++        {
++            float x1 = (l+r)/2;
++            float y1 = (t+b)/2;
++            glTranslatef(x1-y1, x1+y1, 0);
++            glRotatef(270, 0, 0, 1);
+             break;
++        }
+         case Transform::ROT_180:
++        {
++            float x1 = (l+r)/2;
++            float y1 = (t+b)/2;
++            glTranslatef(x1*2, y1*2, 0);
+             glRotatef(180, 0, 0, 1);
+             break;
++        }
+         case Transform::ROT_270:
+-            glRotatef(270, 0, 0, 1);
++        {
++            float x1 = (l+r)/2;
++            float y1 = (t+b)/2;
++            glTranslatef(x1+y1, y1-x1, 0);
++            glRotatef(90, 0, 0, 1);
+             break;
++        }
+         default:
+             break;
+     }
+@@ -239,28 +254,44 @@ void GLES11RenderEngine::disableBlending() {
+ }
+ 
+ void GLES11RenderEngine::bindImageAsFramebuffer(EGLImageKHR image,
+-        uint32_t* texName, uint32_t* fbName, uint32_t* status) {
++        uint32_t* texName, uint32_t* fbName, uint32_t* status,
++        bool useReadPixels, int reqWidth, int reqHeight) {
+     GLuint tname, name;
+-    // turn our EGLImage into a texture
+-    glGenTextures(1, &tname);
+-    glBindTexture(GL_TEXTURE_2D, tname);
+-    glEGLImageTargetTexture2DOES(GL_TEXTURE_2D, (GLeglImageOES)image);
+-
+-    // create a Framebuffer Object to render into
+-    glGenFramebuffersOES(1, &name);
+-    glBindFramebufferOES(GL_FRAMEBUFFER_OES, name);
+-    glFramebufferTexture2DOES(GL_FRAMEBUFFER_OES,
+-            GL_COLOR_ATTACHMENT0_OES, GL_TEXTURE_2D, tname, 0);
+-
++    if (!useReadPixels) {
++        // turn our EGLImage into a texture
++        glGenTextures(1, &tname);
++        glBindTexture(GL_TEXTURE_2D, tname);
++        glEGLImageTargetTexture2DOES(GL_TEXTURE_2D, (GLeglImageOES)image);
++
++        // create a Framebuffer Object to render into
++        glGenFramebuffersOES(1, &name);
++        glBindFramebufferOES(GL_FRAMEBUFFER_OES, name);
++        glFramebufferTexture2DOES(GL_FRAMEBUFFER_OES,
++                GL_COLOR_ATTACHMENT0_OES, GL_TEXTURE_2D, tname, 0);
++    } else {
++        // since we're going to use glReadPixels() anyways,
++        // use an intermediate renderbuffer instead
++        glGenRenderbuffersOES(1, &tname);
++        glBindRenderbufferOES(GL_RENDERBUFFER_OES, tname);
++        glRenderbufferStorageOES(GL_RENDERBUFFER_OES, GL_RGBA8_OES, reqWidth, reqHeight);
++        // create a FBO to render into
++        glGenFramebuffersOES(1, &name);
++        glBindFramebufferOES(GL_FRAMEBUFFER_OES, name);
++        glFramebufferRenderbufferOES(GL_FRAMEBUFFER_OES, GL_COLOR_ATTACHMENT0_OES, GL_RENDERBUFFER_OES, tname);
++    }
+     *status = glCheckFramebufferStatusOES(GL_FRAMEBUFFER_OES);
+     *texName = tname;
+     *fbName = name;
+ }
+ 
+-void GLES11RenderEngine::unbindFramebuffer(uint32_t texName, uint32_t fbName) {
++void GLES11RenderEngine::unbindFramebuffer(uint32_t texName, uint32_t fbName,
++        bool useReadPixels) {
+     glBindFramebufferOES(GL_FRAMEBUFFER_OES, 0);
+     glDeleteFramebuffersOES(1, &fbName);
+-    glDeleteTextures(1, &texName);
++    if (!useReadPixels)
++        glDeleteTextures(1, &texName);
++    else
++        glDeleteRenderbuffersOES(1, &texName);
+ }
+ 
+ void GLES11RenderEngine::setupFillWithColor(float r, float g, float b, float a) {
+diff --git a/services/surfaceflinger/RenderEngine/GLES11RenderEngine.h b/services/surfaceflinger/RenderEngine/GLES11RenderEngine.h
+index 4cd968d12..1ef659625 100644
+--- a/services/surfaceflinger/RenderEngine/GLES11RenderEngine.h
++++ b/services/surfaceflinger/RenderEngine/GLES11RenderEngine.h
+@@ -40,8 +40,9 @@ class GLES11RenderEngine : public RenderEngine {
+     GLint mMaxTextureSize;
+ 
+     virtual void bindImageAsFramebuffer(EGLImageKHR image,
+-            uint32_t* texName, uint32_t* fbName, uint32_t* status);
+-    virtual void unbindFramebuffer(uint32_t texName, uint32_t fbName);
++            uint32_t* texName, uint32_t* fbName, uint32_t* status,
++            bool useReadPixels, int reqWidth, int reqHeight);
++    virtual void unbindFramebuffer(uint32_t texName, uint32_t fbName, bool useReadPixels);
+ 
+ public:
+     GLES11RenderEngine();
+diff --git a/services/surfaceflinger/RenderEngine/GLES20RenderEngine.cpp b/services/surfaceflinger/RenderEngine/GLES20RenderEngine.cpp
+index 406e611ee..e3cbc7054 100644
+--- a/services/surfaceflinger/RenderEngine/GLES20RenderEngine.cpp
++++ b/services/surfaceflinger/RenderEngine/GLES20RenderEngine.cpp
+@@ -208,27 +208,44 @@ void GLES20RenderEngine::disableBlending() {
+ 
+ 
+ void GLES20RenderEngine::bindImageAsFramebuffer(EGLImageKHR image,
+-        uint32_t* texName, uint32_t* fbName, uint32_t* status) {
++        uint32_t* texName, uint32_t* fbName, uint32_t* status,
++        bool useReadPixels, int reqWidth, int reqHeight) {
+     GLuint tname, name;
+-    // turn our EGLImage into a texture
+-    glGenTextures(1, &tname);
+-    glBindTexture(GL_TEXTURE_2D, tname);
+-    glEGLImageTargetTexture2DOES(GL_TEXTURE_2D, (GLeglImageOES)image);
+-
+-    // create a Framebuffer Object to render into
+-    glGenFramebuffers(1, &name);
+-    glBindFramebuffer(GL_FRAMEBUFFER, name);
+-    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, tname, 0);
++    if (!useReadPixels) {
++        // turn our EGLImage into a texture
++        glGenTextures(1, &tname);
++        glBindTexture(GL_TEXTURE_2D, tname);
++        glEGLImageTargetTexture2DOES(GL_TEXTURE_2D, (GLeglImageOES)image);
++
++        // create a Framebuffer Object to render into
++        glGenFramebuffers(1, &name);
++        glBindFramebuffer(GL_FRAMEBUFFER, name);
++        glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, tname, 0);
++    } else {
++        // since we're going to use glReadPixels() anyways,
++        // use an intermediate renderbuffer instead
++        glGenRenderbuffers(1, &tname);
++        glBindRenderbuffer(GL_RENDERBUFFER, tname);
++        glRenderbufferStorage(GL_RENDERBUFFER, GL_RGBA8_OES, reqWidth, reqHeight);
++        // create a FBO to render into
++        glGenFramebuffers(1, &name);
++        glBindFramebuffer(GL_FRAMEBUFFER, name);
++        glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_RENDERBUFFER, tname);
++    }
+ 
+     *status = glCheckFramebufferStatus(GL_FRAMEBUFFER);
+     *texName = tname;
+     *fbName = name;
+ }
+ 
+-void GLES20RenderEngine::unbindFramebuffer(uint32_t texName, uint32_t fbName) {
++void GLES20RenderEngine::unbindFramebuffer(uint32_t texName, uint32_t fbName,
++        bool useReadPixels) {
+     glBindFramebuffer(GL_FRAMEBUFFER, 0);
+     glDeleteFramebuffers(1, &fbName);
+-    glDeleteTextures(1, &texName);
++    if (!useReadPixels)
++        glDeleteTextures(1, &texName);
++    else
++        glDeleteRenderbuffers(1, &texName);
+ }
+ 
+ void GLES20RenderEngine::setupFillWithColor(float r, float g, float b, float a) {
+diff --git a/services/surfaceflinger/RenderEngine/GLES20RenderEngine.h b/services/surfaceflinger/RenderEngine/GLES20RenderEngine.h
+index 7c3f9b5d4..b2681198e 100644
+--- a/services/surfaceflinger/RenderEngine/GLES20RenderEngine.h
++++ b/services/surfaceflinger/RenderEngine/GLES20RenderEngine.h
+@@ -55,8 +55,9 @@ class GLES20RenderEngine : public RenderEngine {
+     Vector<Group> mGroupStack;
+ 
+     virtual void bindImageAsFramebuffer(EGLImageKHR image,
+-            uint32_t* texName, uint32_t* fbName, uint32_t* status);
+-    virtual void unbindFramebuffer(uint32_t texName, uint32_t fbName);
++            uint32_t* texName, uint32_t* fbName, uint32_t* status,
++            bool useReadPixels, int reqWidth, int reqHeight);
++    virtual void unbindFramebuffer(uint32_t texName, uint32_t fbName, bool useReadPixels);
+ 
+ public:
+     GLES20RenderEngine();
+diff --git a/services/surfaceflinger/RenderEngine/RenderEngine.cpp b/services/surfaceflinger/RenderEngine/RenderEngine.cpp
+index d6a032fb3..d0df8ab4b 100644
+--- a/services/surfaceflinger/RenderEngine/RenderEngine.cpp
++++ b/services/surfaceflinger/RenderEngine/RenderEngine.cpp
+@@ -262,9 +262,11 @@ void RenderEngine::dump(String8& result) {
+ // ---------------------------------------------------------------------------
+ 
+ RenderEngine::BindImageAsFramebuffer::BindImageAsFramebuffer(
+-        RenderEngine& engine, EGLImageKHR image) : mEngine(engine)
++        RenderEngine& engine, EGLImageKHR image, bool useReadPixels,
++        int reqWidth, int reqHeight) : mEngine(engine), mUseReadPixels(useReadPixels)
+ {
+-    mEngine.bindImageAsFramebuffer(image, &mTexName, &mFbName, &mStatus);
++    mEngine.bindImageAsFramebuffer(image, &mTexName, &mFbName, &mStatus,
++            useReadPixels, reqWidth, reqHeight);
+ 
+     ALOGE_IF(mStatus != GL_FRAMEBUFFER_COMPLETE_OES,
+             "glCheckFramebufferStatusOES error %d", mStatus);
+@@ -272,7 +274,7 @@ RenderEngine::BindImageAsFramebuffer::BindImageAsFramebuffer(
+ 
+ RenderEngine::BindImageAsFramebuffer::~BindImageAsFramebuffer() {
+     // back to main framebuffer
+-    mEngine.unbindFramebuffer(mTexName, mFbName);
++    mEngine.unbindFramebuffer(mTexName, mFbName, mUseReadPixels);
+ }
+ 
+ status_t RenderEngine::BindImageAsFramebuffer::getStatus() const {
+diff --git a/services/surfaceflinger/RenderEngine/RenderEngine.h b/services/surfaceflinger/RenderEngine/RenderEngine.h
+index 0259881ee..5a5910ab8 100644
+--- a/services/surfaceflinger/RenderEngine/RenderEngine.h
++++ b/services/surfaceflinger/RenderEngine/RenderEngine.h
+@@ -51,8 +51,8 @@ class RenderEngine {
+     EGLContext mEGLContext;
+     void setEGLHandles(EGLConfig config, EGLContext ctxt);
+ 
+-    virtual void bindImageAsFramebuffer(EGLImageKHR image, uint32_t* texName, uint32_t* fbName, uint32_t* status) = 0;
+-    virtual void unbindFramebuffer(uint32_t texName, uint32_t fbName) = 0;
++    virtual void bindImageAsFramebuffer(EGLImageKHR image, uint32_t* texName, uint32_t* fbName, uint32_t* status, bool useReadPixels, int reqWidth, int reqHeight) = 0;
++    virtual void unbindFramebuffer(uint32_t texName, uint32_t fbName, bool useReadPixels) = 0;
+ 
+ protected:
+     RenderEngine();
+@@ -85,8 +85,9 @@ public:
+         RenderEngine& mEngine;
+         uint32_t mTexName, mFbName;
+         uint32_t mStatus;
++        bool mUseReadPixels;
+     public:
+-        BindImageAsFramebuffer(RenderEngine& engine, EGLImageKHR image);
++        BindImageAsFramebuffer(RenderEngine& engine, EGLImageKHR image, bool useReadPixels, int reqWidth, int reqHeight);
+         ~BindImageAsFramebuffer();
+         int getStatus() const;
+     };
+diff --git a/services/surfaceflinger/SurfaceFlinger.cpp b/services/surfaceflinger/SurfaceFlinger.cpp
+index 07d4e22df..40e4c6997 100644
+--- a/services/surfaceflinger/SurfaceFlinger.cpp
++++ b/services/surfaceflinger/SurfaceFlinger.cpp
+@@ -3437,7 +3437,8 @@ status_t SurfaceFlinger::captureScreen(const sp<IBinder>& display,
+         const sp<IGraphicBufferProducer>& producer,
+         Rect sourceCrop, uint32_t reqWidth, uint32_t reqHeight,
+         uint32_t minLayerZ, uint32_t maxLayerZ,
+-        bool useIdentityTransform, ISurfaceComposer::Rotation rotation) {
++        bool useIdentityTransform, ISurfaceComposer::Rotation rotation,
++        bool useReadPixels) {
+ 
+     if (CC_UNLIKELY(display == 0))
+         return BAD_VALUE;
+@@ -3481,6 +3482,7 @@ status_t SurfaceFlinger::captureScreen(const sp<IBinder>& display,
+         bool useIdentityTransform;
+         Transform::orientation_flags rotation;
+         status_t result;
++        bool useReadPixels;
+         bool isLocalScreenshot;
+     public:
+         MessageCaptureScreen(SurfaceFlinger* flinger,
+@@ -3490,12 +3492,13 @@ status_t SurfaceFlinger::captureScreen(const sp<IBinder>& display,
+                 uint32_t minLayerZ, uint32_t maxLayerZ,
+                 bool useIdentityTransform,
+                 Transform::orientation_flags rotation,
+-                bool isLocalScreenshot)
++                bool isLocalScreenshot, bool useReadPixels)
+             : flinger(flinger), display(display), producer(producer),
+               sourceCrop(sourceCrop), reqWidth(reqWidth), reqHeight(reqHeight),
+               minLayerZ(minLayerZ), maxLayerZ(maxLayerZ),
+               useIdentityTransform(useIdentityTransform),
+               rotation(rotation), result(PERMISSION_DENIED),
++              useReadPixels(useReadPixels),
+               isLocalScreenshot(isLocalScreenshot)
+         {
+         }
+@@ -3505,9 +3508,10 @@ status_t SurfaceFlinger::captureScreen(const sp<IBinder>& display,
+         virtual bool handler() {
+             Mutex::Autolock _l(flinger->mStateLock);
+             sp<const DisplayDevice> hw(flinger->getDisplayDevice(display));
++            bool useReadPixels = this->useReadPixels && !flinger->mGpuToCpuSupported;
+             result = flinger->captureScreenImplLocked(hw, producer,
+                     sourceCrop, reqWidth, reqHeight, minLayerZ, maxLayerZ,
+-                    useIdentityTransform, rotation, isLocalScreenshot);
++                    useIdentityTransform, rotation, isLocalScreenshot, useReadPixels);
+             static_cast<GraphicProducerWrapper*>(IInterface::asBinder(producer).get())->exit(result);
+             return true;
+         }
+@@ -3523,7 +3527,7 @@ status_t SurfaceFlinger::captureScreen(const sp<IBinder>& display,
+     sp<MessageBase> msg = new MessageCaptureScreen(this,
+             display, IGraphicBufferProducer::asInterface( wrapper ),
+             sourceCrop, reqWidth, reqHeight, minLayerZ, maxLayerZ,
+-            useIdentityTransform, rotationFlags, isLocalScreenshot);
++            useIdentityTransform, rotationFlags, isLocalScreenshot, useReadPixels);
+ 
+     status_t res = postMessageAsync(msg);
+     if (res == NO_ERROR) {
+@@ -3606,7 +3610,7 @@ status_t SurfaceFlinger::captureScreenImplLocked(
+         Rect sourceCrop, uint32_t reqWidth, uint32_t reqHeight,
+         uint32_t minLayerZ, uint32_t maxLayerZ,
+         bool useIdentityTransform, Transform::orientation_flags rotation,
+-        bool isLocalScreenshot)
++        bool isLocalScreenshot, bool useReadPixels)
+ {
+     ATRACE_CALL();
+ 
+@@ -3684,7 +3688,7 @@ status_t SurfaceFlinger::captureScreenImplLocked(
+                 if (image != EGL_NO_IMAGE_KHR) {
+                     // this binds the given EGLImage as a framebuffer for the
+                     // duration of this scope.
+-                    RenderEngine::BindImageAsFramebuffer imageBond(getRenderEngine(), image);
++                    RenderEngine::BindImageAsFramebuffer imageBond(getRenderEngine(), image, useReadPixels, reqWidth, reqHeight);
+                     if (imageBond.getStatus() == NO_ERROR) {
+                         // this will in fact render into our dequeued buffer
+                         // via an FBO, which means we didn't have to create
+@@ -3731,6 +3735,16 @@ status_t SurfaceFlinger::captureScreenImplLocked(
+                                 ALOGW("captureScreen: error creating EGL fence: %#x", eglGetError());
+                             }
+                         }
++
++                        if (useReadPixels) {
++                            sp<GraphicBuffer> buf = static_cast<GraphicBuffer*>(buffer);
++                            void* vaddr;
++                            if (buf->lock(GRALLOC_USAGE_SW_WRITE_OFTEN, &vaddr) == NO_ERROR) {
++                                getRenderEngine().readPixels(0, 0, buffer->stride, reqHeight, (uint32_t *)vaddr);
++                                buf->unlock();
++                            }
++                        }
++
+                         if (DEBUG_SCREENSHOTS) {
+                             uint32_t* pixels = new uint32_t[reqWidth*reqHeight];
+                             getRenderEngine().readPixels(0, 0, reqWidth, reqHeight, pixels);
+diff --git a/services/surfaceflinger/SurfaceFlinger.h b/services/surfaceflinger/SurfaceFlinger.h
+index b98924bb2..2c3bd193d 100644
+--- a/services/surfaceflinger/SurfaceFlinger.h
++++ b/services/surfaceflinger/SurfaceFlinger.h
+@@ -218,7 +218,8 @@ private:
+             const sp<IGraphicBufferProducer>& producer,
+             Rect sourceCrop, uint32_t reqWidth, uint32_t reqHeight,
+             uint32_t minLayerZ, uint32_t maxLayerZ,
+-            bool useIdentityTransform, ISurfaceComposer::Rotation rotation);
++            bool useIdentityTransform, ISurfaceComposer::Rotation rotation,
++            bool useReadPixels);
+     virtual status_t getDisplayStats(const sp<IBinder>& display,
+             DisplayStatInfo* stats);
+     virtual status_t getDisplayConfigs(const sp<IBinder>& display,
+@@ -350,7 +351,7 @@ private:
+             Rect sourceCrop, uint32_t reqWidth, uint32_t reqHeight,
+             uint32_t minLayerZ, uint32_t maxLayerZ,
+             bool useIdentityTransform, Transform::orientation_flags rotation,
+-            bool isLocalScreenshot);
++            bool isLocalScreenshot, bool useReadPixels);
+ 
+     /* ------------------------------------------------------------------------
+      * EGL
+diff --git a/services/surfaceflinger/SurfaceFlinger_hwc1.cpp b/services/surfaceflinger/SurfaceFlinger_hwc1.cpp
+index c8a1ecf41..0f673642e 100644
+--- a/services/surfaceflinger/SurfaceFlinger_hwc1.cpp
++++ b/services/surfaceflinger/SurfaceFlinger_hwc1.cpp
+@@ -635,10 +635,21 @@ status_t SurfaceFlinger::getDisplayConfigs(const sp<IBinder>& display,
+             info.orientation = 0;
+         }
+ 
+-        info.w = hwConfig.width;
+-        info.h = hwConfig.height;
+-        info.xdpi = xdpi;
+-        info.ydpi = ydpi;
++        char value[PROPERTY_VALUE_MAX];
++        property_get("ro.sf.hwrotation", value, "0");
++        int additionalRot = atoi(value) / 90;
++        if ((type == DisplayDevice::DISPLAY_PRIMARY) && (additionalRot & DisplayState::eOrientationSwapMask)) {
++            info.h = hwConfig.width;
++            info.w = hwConfig.height;
++            info.xdpi = ydpi;
++            info.ydpi = xdpi;
++        }
++        else {
++            info.w = hwConfig.width;
++            info.h = hwConfig.height;
++            info.xdpi = xdpi;
++            info.ydpi = ydpi;
++        }
+         info.fps = float(1e9 / hwConfig.refresh);
+         info.appVsyncOffset = VSYNC_EVENT_PHASE_OFFSET_NS;
+ 
+@@ -3186,12 +3197,14 @@ status_t SurfaceFlinger::onTransact(
+             }
+             case 1018: { // Modify Choreographer's phase offset
+                 n = data.readInt32();
+-                mEventThread->setPhaseOffset(static_cast<nsecs_t>(n));
++                if (mEventThread != NULL)
++                    mEventThread->setPhaseOffset(static_cast<nsecs_t>(n));
+                 return NO_ERROR;
+             }
+             case 1019: { // Modify SurfaceFlinger's phase offset
+                 n = data.readInt32();
+-                mSFEventThread->setPhaseOffset(static_cast<nsecs_t>(n));
++                if (mSFEventThread != NULL)
++                    mSFEventThread->setPhaseOffset(static_cast<nsecs_t>(n));
+                 return NO_ERROR;
+             }
+             case 1021: { // Disable HWC virtual displays
+@@ -3330,7 +3343,8 @@ status_t SurfaceFlinger::captureScreen(const sp<IBinder>& display,
+         const sp<IGraphicBufferProducer>& producer,
+         Rect sourceCrop, uint32_t reqWidth, uint32_t reqHeight,
+         uint32_t minLayerZ, uint32_t maxLayerZ,
+-        bool useIdentityTransform, ISurfaceComposer::Rotation rotation) {
++        bool useIdentityTransform, ISurfaceComposer::Rotation rotation,
++        bool useReadPixels) {
+ 
+     if (CC_UNLIKELY(display == 0))
+         return BAD_VALUE;
+@@ -3374,6 +3388,7 @@ status_t SurfaceFlinger::captureScreen(const sp<IBinder>& display,
+         bool useIdentityTransform;
+         Transform::orientation_flags rotation;
+         status_t result;
++        bool useReadPixels;
+         bool isLocalScreenshot;
+     public:
+         MessageCaptureScreen(SurfaceFlinger* flinger,
+@@ -3383,12 +3398,13 @@ status_t SurfaceFlinger::captureScreen(const sp<IBinder>& display,
+                 uint32_t minLayerZ, uint32_t maxLayerZ,
+                 bool useIdentityTransform,
+                 Transform::orientation_flags rotation,
+-                bool isLocalScreenshot)
++                bool isLocalScreenshot, bool useReadPixels)
+             : flinger(flinger), display(display), producer(producer),
+               sourceCrop(sourceCrop), reqWidth(reqWidth), reqHeight(reqHeight),
+               minLayerZ(minLayerZ), maxLayerZ(maxLayerZ),
+               useIdentityTransform(useIdentityTransform),
+               rotation(rotation), result(PERMISSION_DENIED),
++              useReadPixels(useReadPixels),
+               isLocalScreenshot(isLocalScreenshot)
+         {
+         }
+@@ -3398,9 +3414,10 @@ status_t SurfaceFlinger::captureScreen(const sp<IBinder>& display,
+         virtual bool handler() {
+             Mutex::Autolock _l(flinger->mStateLock);
+             sp<const DisplayDevice> hw(flinger->getDisplayDevice(display));
++            bool useReadPixels = this->useReadPixels && !flinger->mGpuToCpuSupported;
+             result = flinger->captureScreenImplLocked(hw, producer,
+                     sourceCrop, reqWidth, reqHeight, minLayerZ, maxLayerZ,
+-                    useIdentityTransform, rotation, isLocalScreenshot);
++                    useIdentityTransform, rotation, isLocalScreenshot, useReadPixels);
+             static_cast<GraphicProducerWrapper*>(IInterface::asBinder(producer).get())->exit(result);
+             return true;
+         }
+@@ -3416,7 +3433,7 @@ status_t SurfaceFlinger::captureScreen(const sp<IBinder>& display,
+     sp<MessageBase> msg = new MessageCaptureScreen(this,
+             display, IGraphicBufferProducer::asInterface( wrapper ),
+             sourceCrop, reqWidth, reqHeight, minLayerZ, maxLayerZ,
+-            useIdentityTransform, rotationFlags, isLocalScreenshot);
++            useIdentityTransform, rotationFlags, isLocalScreenshot, useReadPixels);
+ 
+     status_t res = postMessageAsync(msg);
+     if (res == NO_ERROR) {
+@@ -3501,7 +3518,7 @@ status_t SurfaceFlinger::captureScreenImplLocked(
+         Rect sourceCrop, uint32_t reqWidth, uint32_t reqHeight,
+         uint32_t minLayerZ, uint32_t maxLayerZ,
+         bool useIdentityTransform, Transform::orientation_flags rotation,
+-        bool isLocalScreenshot)
++        bool isLocalScreenshot, bool useReadPixels)
+ {
+     ATRACE_CALL();
+ 
+@@ -3571,7 +3588,7 @@ status_t SurfaceFlinger::captureScreenImplLocked(
+                 if (image != EGL_NO_IMAGE_KHR) {
+                     // this binds the given EGLImage as a framebuffer for the
+                     // duration of this scope.
+-                    RenderEngine::BindImageAsFramebuffer imageBond(getRenderEngine(), image);
++                    RenderEngine::BindImageAsFramebuffer imageBond(getRenderEngine(), image, useReadPixels, reqWidth, reqHeight);
+                     if (imageBond.getStatus() == NO_ERROR) {
+                         // this will in fact render into our dequeued buffer
+                         // via an FBO, which means we didn't have to create
+@@ -3618,6 +3635,16 @@ status_t SurfaceFlinger::captureScreenImplLocked(
+                                 ALOGW("captureScreen: error creating EGL fence: %#x", eglGetError());
+                             }
+                         }
++
++                        if (useReadPixels) {
++                            sp<GraphicBuffer> buf = static_cast<GraphicBuffer*>(buffer);
++                            void* vaddr;
++                            if (buf->lock(GRALLOC_USAGE_SW_WRITE_OFTEN, &vaddr) == NO_ERROR) {
++                                getRenderEngine().readPixels(0, 0, buffer->stride, reqHeight, (uint32_t *)vaddr);
++                                buf->unlock();
++                            }
++                        }
++
+                         if (DEBUG_SCREENSHOTS) {
+                             uint32_t* pixels = new uint32_t[reqWidth*reqHeight];
+                             getRenderEngine().readPixels(0, 0, reqWidth, reqHeight, pixels);

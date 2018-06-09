@@ -1,0 +1,164 @@
+diff --git a/arm-wt-22k/lib_src/eas_mdls.c b/arm-wt-22k/lib_src/eas_mdls.c
+index 8097ba4..3ec24a0 100644
+--- a/arm-wt-22k/lib_src/eas_mdls.c
++++ b/arm-wt-22k/lib_src/eas_mdls.c
+@@ -602,6 +602,7 @@ EAS_RESULT DLSParser (EAS_HW_DATA_HANDLE hwInstData, EAS_FILE_HANDLE fileHandle,
+         if ((dls.regionCount == 0) || (dls.regionCount > DLS_MAX_REGION_COUNT))
+         {
+             { /* dpp: EAS_ReportEx(_EAS_SEVERITY_ERROR, "DLS file contains invalid #regions [%u]\n", dls.regionCount); */ }
++            EAS_HWFree(dls.hwInstData, dls.wsmpData);
+             return EAS_ERROR_FILE_FORMAT;
+         }
+ 
+@@ -609,6 +610,7 @@ EAS_RESULT DLSParser (EAS_HW_DATA_HANDLE hwInstData, EAS_FILE_HANDLE fileHandle,
+         if ((dls.artCount == 0) || (dls.artCount > DLS_MAX_ART_COUNT))
+         {
+             { /* dpp: EAS_ReportEx(_EAS_SEVERITY_ERROR, "DLS file contains invalid #articulations [%u]\n", dls.regionCount); */ }
++            EAS_HWFree(dls.hwInstData, dls.wsmpData);
+             return EAS_ERROR_FILE_FORMAT;
+         }
+ 
+@@ -616,6 +618,7 @@ EAS_RESULT DLSParser (EAS_HW_DATA_HANDLE hwInstData, EAS_FILE_HANDLE fileHandle,
+         if ((dls.instCount == 0) || (dls.instCount > DLS_MAX_INST_COUNT))
+         {
+             { /* dpp: EAS_ReportEx(_EAS_SEVERITY_ERROR, "DLS file contains invalid #instruments [%u]\n", dls.instCount); */ }
++            EAS_HWFree(dls.hwInstData, dls.wsmpData);
+             return EAS_ERROR_FILE_FORMAT;
+         }
+ 
+@@ -636,6 +639,7 @@ EAS_RESULT DLSParser (EAS_HW_DATA_HANDLE hwInstData, EAS_FILE_HANDLE fileHandle,
+         /* calculate final memory size */
+         size = (EAS_I32) sizeof(S_EAS) + instSize + rgnPoolSize + artPoolSize + (2 * waveLenSize) + (EAS_I32) dls.wavePoolSize;
+         if (size <= 0) {
++            EAS_HWFree(dls.hwInstData, dls.wsmpData);
+             return EAS_ERROR_FILE_FORMAT;
+         }
+ 
+@@ -644,6 +648,7 @@ EAS_RESULT DLSParser (EAS_HW_DATA_HANDLE hwInstData, EAS_FILE_HANDLE fileHandle,
+         if (dls.pDLS == NULL)
+         {
+             { /* dpp: EAS_ReportEx(_EAS_SEVERITY_ERROR, "EAS_HWMalloc failed for DLS memory allocation size %ld\n", size); */ }
++            EAS_HWFree(dls.hwInstData, dls.wsmpData);
+             return EAS_ERROR_MALLOC_FAILED;
+         }
+         EAS_HWMemSet(dls.pDLS, 0, size);
+diff --git a/arm-wt-22k/lib_src/eas_smf.c b/arm-wt-22k/lib_src/eas_smf.c
+index 8b54b8e..3c284eb 100644
+--- a/arm-wt-22k/lib_src/eas_smf.c
++++ b/arm-wt-22k/lib_src/eas_smf.c
+@@ -29,6 +29,8 @@
+  *----------------------------------------------------------------------------
+ */
+ 
++#include "log/log.h"
++
+ #include "eas_data.h"
+ #include "eas_miditypes.h"
+ #include "eas_parser.h"
+@@ -833,6 +835,20 @@ static EAS_RESULT SMF_ParseMetaEvent (S_EAS_DATA *pEASData, S_SMF_DATA *pSMFData
+     /* get the current file position so we can skip the event */
+     if ((result = EAS_HWFilePos(pEASData->hwInstData, pSMFStream->fileHandle, &pos)) != EAS_SUCCESS)
+         return result;
++
++    /* prevent a large unsigned length from being treated as a negative length */
++    if ((EAS_I32) len < 0) {
++        /* note that EAS_I32 is a long, which can be 64-bits on some computers */
++        ALOGE("b/68953854 SMF_ParseMetaEvent, negative len = %ld\n", (EAS_I32) len);
++        return EAS_ERROR_FILE_FORMAT;
++    }
++    /* prevent numeric overflow caused by a very large len, assume pos > 0 */
++    const EAS_I32 EAS_I32_MAX = 0x7FFFFFFF;
++    if ((EAS_I32) len > (EAS_I32_MAX - pos)) {
++        ALOGE("b/68953854 SMF_ParseMetaEvent, too large len = %ld\n", (EAS_I32) len);
++        return EAS_ERROR_FILE_FORMAT;
++    }
++
+     pos += (EAS_I32) len;
+ 
+     /* end of track? */
+diff --git a/arm-wt-22k/lib_src/eas_wtsynth.c b/arm-wt-22k/lib_src/eas_wtsynth.c
+index 9fcda7b..8488fe2 100644
+--- a/arm-wt-22k/lib_src/eas_wtsynth.c
++++ b/arm-wt-22k/lib_src/eas_wtsynth.c
+@@ -28,6 +28,7 @@
+ */
+ 
+ // includes
++#define LOG_TAG "SYNTH"
+ #include "log/log.h"
+ #include <cutils/log.h>
+ 
+@@ -557,6 +558,14 @@ static EAS_BOOL WT_UpdateVoice (S_VOICE_MGR *pVoiceMgr, S_SYNTH *pSynth, S_SYNTH
+     else
+         temp += (pVoice->note + pSynth->globalTranspose) * 100;
+     intFrame.frame.phaseIncrement = WT_UpdatePhaseInc(pWTVoice, pArt, pChannel, temp);
++    temp = pWTVoice->loopEnd - pWTVoice->loopStart;
++    if (temp != 0) {
++        temp = temp << NUM_PHASE_FRAC_BITS;
++        if (intFrame.frame.phaseIncrement > temp) {
++            ALOGW("%p phaseIncrement=%d", pWTVoice, (int)intFrame.frame.phaseIncrement);
++            intFrame.frame.phaseIncrement %= temp;
++        }
++    }
+ 
+     /* call into engine to generate samples */
+     intFrame.pAudioBuffer = pVoiceMgr->voiceBuffer;
+diff --git a/arm-wt-22k/lib_src/eas_xmf.c b/arm-wt-22k/lib_src/eas_xmf.c
+index 169eb7e..07ee8f7 100644
+--- a/arm-wt-22k/lib_src/eas_xmf.c
++++ b/arm-wt-22k/lib_src/eas_xmf.c
+@@ -67,7 +67,7 @@ static EAS_RESULT XMF_Resume (S_EAS_DATA *pEASData, EAS_VOID_PTR pInstData);
+ static EAS_RESULT XMF_SetData (S_EAS_DATA *pEASData, EAS_VOID_PTR pInstData, EAS_I32 param, EAS_I32 value);
+ static EAS_RESULT XMF_GetData (S_EAS_DATA *pEASData, EAS_VOID_PTR pInstData, EAS_I32 param, EAS_I32 *pValue);
+ static EAS_RESULT XMF_FindFileContents (EAS_HW_DATA_HANDLE hwInstData, S_XMF_DATA *pXMFData);
+-static EAS_RESULT XMF_ReadNode (EAS_HW_DATA_HANDLE hwInstData, S_XMF_DATA *pXMFData, EAS_I32 nodeOffset, EAS_I32 *pLength);
++static EAS_RESULT XMF_ReadNode (EAS_HW_DATA_HANDLE hwInstData, S_XMF_DATA *pXMFData, EAS_I32 nodeOffset, EAS_I32 *pLength, EAS_I32 depth);
+ static EAS_RESULT XMF_ReadVLQ (EAS_HW_DATA_HANDLE hwInstData, EAS_FILE_HANDLE fileHandle, EAS_I32 *value);
+ 
+ 
+@@ -504,6 +504,7 @@ static EAS_RESULT XMF_FindFileContents (EAS_HW_DATA_HANDLE hwInstData, S_XMF_DAT
+     EAS_RESULT result;
+     EAS_I32 value;
+     EAS_I32 length;
++    EAS_I32 node_depth = 0 ;
+ 
+     /* initialize offsets */
+     pXMFData->dlsOffset = pXMFData->midiOffset = 0;
+@@ -521,7 +522,7 @@ static EAS_RESULT XMF_FindFileContents (EAS_HW_DATA_HANDLE hwInstData, S_XMF_DAT
+     /* get TreeStart offset and jump to it */
+     if ((result = XMF_ReadVLQ(hwInstData, pXMFData->fileHandle, &value)) != EAS_SUCCESS)
+         return result;
+-    if ((result = XMF_ReadNode(hwInstData, pXMFData, value, &length)) != EAS_SUCCESS)
++    if ((result = XMF_ReadNode(hwInstData, pXMFData, value, &length, node_depth)) != EAS_SUCCESS)
+         return result;
+ 
+     /* check for SMF data */
+@@ -552,7 +553,7 @@ static EAS_RESULT XMF_FindFileContents (EAS_HW_DATA_HANDLE hwInstData, S_XMF_DAT
+  *
+  *----------------------------------------------------------------------------
+ */
+-static EAS_RESULT XMF_ReadNode (EAS_HW_DATA_HANDLE hwInstData, S_XMF_DATA *pXMFData, EAS_I32 nodeOffset, EAS_I32 *pLength)
++static EAS_RESULT XMF_ReadNode (EAS_HW_DATA_HANDLE hwInstData, S_XMF_DATA *pXMFData, EAS_I32 nodeOffset, EAS_I32 *pLength, EAS_I32 depth)
+ {
+     EAS_RESULT result;
+     EAS_I32 refType;
+@@ -562,6 +563,10 @@ static EAS_RESULT XMF_ReadNode (EAS_HW_DATA_HANDLE hwInstData, S_XMF_DATA *pXMFD
+     EAS_I32 headerLength;
+     EAS_U32 chunkType;
+ 
++    /* check the depth of current node*/
++    if ( depth > 100 )
++        return EAS_ERROR_FILE_FORMAT;
++
+     /* seek to start of node */
+     if ((result = EAS_HWFileSeek(hwInstData, pXMFData->fileHandle, nodeOffset)) != EAS_SUCCESS)
+         return result;
+@@ -656,7 +661,7 @@ static EAS_RESULT XMF_ReadNode (EAS_HW_DATA_HANDLE hwInstData, S_XMF_DATA *pXMFD
+                 return EAS_ERROR_FILE_FORMAT;
+             }
+ 
+-            if ((result = XMF_ReadNode(hwInstData, pXMFData, offset, &length)) != EAS_SUCCESS)
++            if ((result = XMF_ReadNode(hwInstData, pXMFData, offset, &length, depth+1)) != EAS_SUCCESS)
+                 return result;
+ 
+             /* seek to start of next item */

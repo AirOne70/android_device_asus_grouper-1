@@ -1,0 +1,245 @@
+diff --git a/fragment/java/android/support/v4/app/FragmentManager.java b/fragment/java/android/support/v4/app/FragmentManager.java
+index 3baf4f9d3..5996c9dbc 100644
+--- a/fragment/java/android/support/v4/app/FragmentManager.java
++++ b/fragment/java/android/support/v4/app/FragmentManager.java
+@@ -2146,26 +2146,36 @@ final class FragmentManagerImpl extends FragmentManager implements LayoutInflate
+ 
+     public void dispatchCreate() {
+         mStateSaved = false;
++        mExecutingActions = true;
+         moveToState(Fragment.CREATED, false);
++        mExecutingActions = false;
+     }
+ 
+     public void dispatchActivityCreated() {
+         mStateSaved = false;
++        mExecutingActions = true;
+         moveToState(Fragment.ACTIVITY_CREATED, false);
++        mExecutingActions = false;
+     }
+ 
+     public void dispatchStart() {
+         mStateSaved = false;
++        mExecutingActions = true;
+         moveToState(Fragment.STARTED, false);
++        mExecutingActions = false;
+     }
+ 
+     public void dispatchResume() {
+         mStateSaved = false;
++        mExecutingActions = true;
+         moveToState(Fragment.RESUMED, false);
++        mExecutingActions = false;
+     }
+ 
+     public void dispatchPause() {
++        mExecutingActions = true;
+         moveToState(Fragment.STARTED, false);
++        mExecutingActions = false;
+     }
+ 
+     public void dispatchStop() {
+@@ -2174,21 +2184,29 @@ final class FragmentManagerImpl extends FragmentManager implements LayoutInflate
+         // them.
+         mStateSaved = true;
+ 
++        mExecutingActions = true;
+         moveToState(Fragment.STOPPED, false);
++        mExecutingActions = false;
+     }
+ 
+     public void dispatchReallyStop() {
++        mExecutingActions = true;
+         moveToState(Fragment.ACTIVITY_CREATED, false);
++        mExecutingActions = false;
+     }
+ 
+     public void dispatchDestroyView() {
++        mExecutingActions = true;
+         moveToState(Fragment.CREATED, false);
++        mExecutingActions = false;
+     }
+ 
+     public void dispatchDestroy() {
+         mDestroyed = true;
+         execPendingActions();
++        mExecutingActions = true;
+         moveToState(Fragment.INITIALIZING, false);
++        mExecutingActions = false;
+         mHost = null;
+         mContainer = null;
+         mParent = null;
+diff --git a/fragment/tests/java/android/support/v4/app/ReentrantFragment.java b/fragment/tests/java/android/support/v4/app/ReentrantFragment.java
+new file mode 100644
+index 000000000..472245df2
+--- /dev/null
++++ b/fragment/tests/java/android/support/v4/app/ReentrantFragment.java
+@@ -0,0 +1,69 @@
++/*
++ * Copyright (C) 2017 The Android Open Source Project
++ *
++ * Licensed under the Apache License, Version 2.0 (the "License");
++ * you may not use this file except in compliance with the License.
++ * You may obtain a copy of the License at
++ *
++ *      http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing, software
++ * distributed under the License is distributed on an "AS IS" BASIS,
++ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++ * See the License for the specific language governing permissions and
++ * limitations under the License.
++ */
++
++package android.support.v4.app;
++
++import android.os.Bundle;
++
++public class ReentrantFragment extends StrictFragment {
++    private static final String FROM_STATE = "fromState";
++    private static final String TO_STATE = "toState";
++    int mFromState = 0;
++    int mToState = 0;
++    boolean mIsRestored;
++
++    public static ReentrantFragment create(int fromState, int toState) {
++        ReentrantFragment fragment = new ReentrantFragment();
++        fragment.mFromState = fromState;
++        fragment.mToState = toState;
++        fragment.mIsRestored = false;
++        return fragment;
++    }
++
++    @Override
++    public void onStateChanged(int fromState) {
++        super.onStateChanged(fromState);
++        // We execute the transaction when shutting down or after restoring
++        if (fromState == mFromState && mState == mToState
++                && (mToState < mFromState || mIsRestored)) {
++            executeTransaction();
++        }
++    }
++
++    private void executeTransaction() {
++        getFragmentManager().beginTransaction()
++                .add(new StrictFragment(), "should throw")
++                .commitNow();
++    }
++
++    @Override
++    public void onSaveInstanceState(Bundle outState) {
++        super.onSaveInstanceState(outState);
++        outState.putInt(FROM_STATE, mFromState);
++        outState.putInt(TO_STATE, mToState);
++    }
++
++    @Override
++    public void onCreate(Bundle savedInstanceState) {
++        if (savedInstanceState != null) {
++            mFromState = savedInstanceState.getInt(FROM_STATE);
++            mToState = savedInstanceState.getInt(TO_STATE);
++            mIsRestored = true;
++        }
++        super.onCreate(savedInstanceState);
++    }
++}
++
+diff --git a/fragment/tests/java/android/support/v4/app/StrictFragment.java b/fragment/tests/java/android/support/v4/app/StrictFragment.java
+index dfda81413..d91c16151 100644
+--- a/fragment/tests/java/android/support/v4/app/StrictFragment.java
++++ b/fragment/tests/java/android/support/v4/app/StrictFragment.java
+@@ -51,6 +51,10 @@ public class StrictFragment extends Fragment {
+         return "(unknown " + state + ")";
+     }
+ 
++    public void onStateChanged(int fromState) {
++        checkGetActivity();
++    }
++
+     public void checkGetActivity() {
+         if (getActivity() == null) {
+             throw new IllegalStateException("getActivity() returned null at unexpected time");
+@@ -92,7 +96,7 @@ public class StrictFragment extends Fragment {
+         mCalledOnAttach = true;
+         checkState("onAttach", DETACHED);
+         mState = ATTACHED;
+-        checkGetActivity();
++        onStateChanged(DETACHED);
+     }
+ 
+     @Override
+@@ -104,7 +108,7 @@ public class StrictFragment extends Fragment {
+         mCalledOnCreate = true;
+         checkState("onCreate", ATTACHED);
+         mState = CREATED;
+-        checkGetActivity();
++        onStateChanged(ATTACHED);
+     }
+ 
+     @Override
+@@ -112,8 +116,9 @@ public class StrictFragment extends Fragment {
+         super.onActivityCreated(savedInstanceState);
+         mCalledOnActivityCreated = true;
+         checkState("onActivityCreated", ATTACHED, CREATED);
++        int fromState = mState;
+         mState = ACTIVITY_CREATED;
+-        checkGetActivity();
++        onStateChanged(fromState);
+     }
+ 
+     @Override
+@@ -122,7 +127,7 @@ public class StrictFragment extends Fragment {
+         mCalledOnStart = true;
+         checkState("onStart", ACTIVITY_CREATED);
+         mState = STARTED;
+-        checkGetActivity();
++        onStateChanged(ACTIVITY_CREATED);
+     }
+ 
+     @Override
+@@ -131,7 +136,7 @@ public class StrictFragment extends Fragment {
+         mCalledOnResume = true;
+         checkState("onResume", STARTED);
+         mState = RESUMED;
+-        checkGetActivity();
++        onStateChanged(STARTED);
+     }
+ 
+     @Override
+@@ -148,7 +153,7 @@ public class StrictFragment extends Fragment {
+         mCalledOnPause = true;
+         checkState("onPause", RESUMED);
+         mState = STARTED;
+-        checkGetActivity();
++        onStateChanged(RESUMED);
+     }
+ 
+     @Override
+@@ -157,7 +162,7 @@ public class StrictFragment extends Fragment {
+         mCalledOnStop = true;
+         checkState("onStop", STARTED);
+         mState = CREATED;
+-        checkGetActivity();
++        onStateChanged(STARTED);
+     }
+ 
+     @Override
+@@ -166,7 +171,7 @@ public class StrictFragment extends Fragment {
+         mCalledOnDestroy = true;
+         checkState("onDestroy", CREATED);
+         mState = ATTACHED;
+-        checkGetActivity();
++        onStateChanged(CREATED);
+     }
+ 
+     @Override
+@@ -174,7 +179,8 @@ public class StrictFragment extends Fragment {
+         super.onDetach();
+         mCalledOnDetach = true;
+         checkState("onDestroy", CREATED, ATTACHED);
++        int fromState = mState;
+         mState = DETACHED;
+-        checkGetActivity();
++        onStateChanged(fromState);
+     }
+ }

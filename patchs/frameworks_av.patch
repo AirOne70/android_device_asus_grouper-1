@@ -1,0 +1,49 @@
+diff --git a/media/libstagefright/SampleTable.cpp b/media/libstagefright/SampleTable.cpp
+index 597896b28..a53ed1df0 100644
+--- a/media/libstagefright/SampleTable.cpp
++++ b/media/libstagefright/SampleTable.cpp
+@@ -374,6 +374,8 @@ status_t SampleTable::setTimeToSampleParams(
+         return ERROR_MALFORMED;
+     }
+ 
++    mSyncSampleOffset = data_offset;
++
+     uint8_t header[8];
+     if (mDataSource->readAt(
+                 data_offset, header, sizeof(header)) < (ssize_t)sizeof(header)) {
+diff --git a/media/mtp/MtpServer.cpp b/media/mtp/MtpServer.cpp
+index 65a241527..ad65d1382 100644
+--- a/media/mtp/MtpServer.cpp
++++ b/media/mtp/MtpServer.cpp
+@@ -95,6 +95,7 @@ static const MtpEventCode kSupportedEventCodes[] = {
+     MTP_EVENT_STORE_ADDED,
+     MTP_EVENT_STORE_REMOVED,
+     MTP_EVENT_DEVICE_PROP_CHANGED,
++    MTP_EVENT_OBJECT_PROP_CHANGED,
+ };
+ 
+ MtpServer::MtpServer(int fd, MtpDatabase* database, bool ptp,
+@@ -254,6 +255,11 @@ MtpStorage* MtpServer::getStorageLocked(MtpStorageID id) {
+     return NULL;
+ }
+ 
++void MtpServer::sendObjectUpdated(MtpObjectHandle handle) {
++    ALOGV("sendObjectUpdated %d\n", handle);
++    sendEvent(MTP_EVENT_OBJECT_PROP_CHANGED, handle);
++}
++
+ bool MtpServer::hasStorage(MtpStorageID id) {
+     if (id == 0 || id == 0xFFFFFFFF)
+         return mStorages.size() > 0;
+diff --git a/media/mtp/MtpServer.h b/media/mtp/MtpServer.h
+index cd543c859..a79e199de 100644
+--- a/media/mtp/MtpServer.h
++++ b/media/mtp/MtpServer.h
+@@ -103,6 +103,7 @@ public:
+     void                sendObjectAdded(MtpObjectHandle handle);
+     void                sendObjectRemoved(MtpObjectHandle handle);
+     void                sendDevicePropertyChanged(MtpDeviceProperty property);
++    void                sendObjectUpdated(MtpObjectHandle handle);
+ 
+ private:
+     MtpStorage*         getStorageLocked(MtpStorageID id);

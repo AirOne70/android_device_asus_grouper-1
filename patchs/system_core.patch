@@ -1,5 +1,76 @@
+diff --git a/include/cutils/iosched_policy.h b/include/cutils/iosched_policy.h
+index 07c5d1fca..25b87bac0 100644
+--- a/include/cutils/iosched_policy.h
++++ b/include/cutils/iosched_policy.h
+@@ -31,6 +31,8 @@ typedef enum {
+ extern int android_set_ioprio(int pid, IoSchedClass clazz, int ioprio);
+ extern int android_get_ioprio(int pid, IoSchedClass *clazz, int *ioprio);
+ 
++extern int android_set_rt_ioprio(int pid, int rt);
++
+ #ifdef __cplusplus
+ }
+ #endif
+diff --git a/include/private/android_filesystem_config.h b/include/private/android_filesystem_config.h
+index 5ccd80e7a..ed8ae3578 100644
+--- a/include/private/android_filesystem_config.h
++++ b/include/private/android_filesystem_config.h
+@@ -121,6 +121,8 @@
+ /* The range 5000-5999 is also reserved for OEM, and must never be used here. */
+ #define AID_OEM_RESERVED_2_START 5000
+ #define AID_OEM_RESERVED_2_END   5999
++#define AID_SENSORS       3011 /* access to /dev/socket/sensor_ctl_socket & QCCI/QCSI */
++
+ 
+ #define AID_EVERYBODY     9997  /* shared between all apps in the same profile */
+ #define AID_MISC          9998  /* access to misc storage */
+@@ -222,6 +224,7 @@ static const struct android_id_info android_ids[] = {
+     { "net_bt_stack",  AID_NET_BT_STACK, },
+     { "readproc",      AID_READPROC, },
+     { "wakelock",      AID_WAKELOCK, },
++    { "sensors",       AID_SENSORS, },
+ 
+     { "everybody",     AID_EVERYBODY, },
+     { "misc",          AID_MISC, },
+diff --git a/include/system/camera.h b/include/system/camera.h
+index 121a93f57..a3810823d 100644
+--- a/include/system/camera.h
++++ b/include/system/camera.h
+@@ -326,7 +326,7 @@ typedef struct camera_face {
+ #endif
+ } camera_face_t;
+ 
+-#ifdef QCOM_HARDWARE
++//#ifdef QCOM_HARDWARE
+ /**
+  * The information of a data type received in a camera frame.
+  */
+@@ -336,7 +336,7 @@ typedef enum {
+     /** File descriptor */
+     CAMERA_FRAME_DATA_FD = 0x100
+ } camera_frame_data_type_t;
+-#endif
++//#endif
+ 
+ /**
+  * The metadata of the frame data.
+diff --git a/include/utils/Unicode.h b/include/utils/Unicode.h
+index cddbab497..b152579c7 100644
+--- a/include/utils/Unicode.h
++++ b/include/utils/Unicode.h
+@@ -22,6 +22,10 @@
+ 
+ extern "C" {
+ 
++#ifndef SSIZE_MAX
++#define SSIZE_MAX ((size_t)SIZE_MAX/2)
++#endif
++
+ // Standard string functions on char16_t strings.
+ int strcmp16(const char16_t *, const char16_t *);
+ int strncmp16(const char16_t *s1, const char16_t *s2, size_t n);
 diff --git a/init/Android.mk b/init/Android.mk
-index 67541b81b..ff343e968 100644
+index f8c56d066..f8094beb9 100644
 --- a/init/Android.mk
 +++ b/init/Android.mk
 @@ -10,7 +10,7 @@ else
@@ -11,3 +82,405 @@ index 67541b81b..ff343e968 100644
  
  init_cflags += \
      $(init_options) \
+diff --git a/init/init.cpp b/init/init.cpp
+index ee0ec9e34..bf1ae0215 100644
+--- a/init/init.cpp
++++ b/init/init.cpp
+@@ -296,55 +296,6 @@ static bool __attribute__((unused)) set_mmap_rnd_bits_min(int start, int min, bo
+     return (start >= min);
+ }
+ 
+-/*
+- * Set /proc/sys/vm/mmap_rnd_bits and potentially
+- * /proc/sys/vm/mmap_rnd_compat_bits to the maximum supported values.
+- * Returns -1 if unable to set these to an acceptable value.  Apply
+- * upstream patch-sets https://lkml.org/lkml/2015/12/21/337 and
+- * https://lkml.org/lkml/2016/2/4/831 to enable this.
+- */
+-static int set_mmap_rnd_bits_action(const std::vector<std::string>& args)
+-{
+-    int ret = -1;
+-
+-    /* values are arch-dependent */
+-#if defined(__aarch64__)
+-    /* arm64 supports 18 - 33 bits depending on pagesize and VA_SIZE */
+-    if (set_mmap_rnd_bits_min(33, 24, false)
+-            && set_mmap_rnd_bits_min(16, 16, true)) {
+-        ret = 0;
+-    }
+-#elif defined(__x86_64__)
+-    /* x86_64 supports 28 - 32 bits */
+-    if (set_mmap_rnd_bits_min(32, 32, false)
+-            && set_mmap_rnd_bits_min(16, 16, true)) {
+-        ret = 0;
+-    }
+-#elif defined(__arm__) || defined(__i386__)
+-    /* check to see if we're running on 64-bit kernel */
+-    bool h64 = !access(MMAP_RND_COMPAT_PATH, F_OK);
+-    /* supported 32-bit architecture must have 16 bits set */
+-    if (set_mmap_rnd_bits_min(16, 16, h64)) {
+-        ret = 0;
+-    }
+-#elif defined(__mips__) || defined(__mips64__)
+-    // TODO: add mips support b/27788820
+-    ret = 0;
+-#else
+-    ERROR("Unknown architecture\n");
+-#endif
+-
+-#ifdef __BRILLO__
+-    // TODO: b/27794137
+-    ret = 0;
+-#endif
+-    if (ret == -1) {
+-        ERROR("Unable to set adequate mmap entropy value!\n");
+-        security_failure();
+-    }
+-    return ret;
+-}
+-
+ static int keychord_init_action(const std::vector<std::string>& args)
+ {
+     keychord_init();
+@@ -722,7 +673,7 @@ int main(int argc, char** argv) {
+     am.QueueBuiltinAction(wait_for_coldboot_done_action, "wait_for_coldboot_done");
+     // ... so that we can start queuing up actions that require stuff from /dev.
+     am.QueueBuiltinAction(mix_hwrng_into_linux_rng_action, "mix_hwrng_into_linux_rng");
+-    am.QueueBuiltinAction(set_mmap_rnd_bits_action, "set_mmap_rnd_bits");
++    // am.QueueBuiltinAction(set_mmap_rnd_bits_action, "set_mmap_rnd_bits");
+     am.QueueBuiltinAction(keychord_init_action, "keychord_init");
+     am.QueueBuiltinAction(console_init_action, "console_init");
+ 
+diff --git a/libcutils/iosched_policy.c b/libcutils/iosched_policy.c
+index 71bc94b25..8a21b8bd7 100644
+--- a/libcutils/iosched_policy.c
++++ b/libcutils/iosched_policy.c
+@@ -1,9 +1,10 @@
+ /*
+-** Copyright 2007, The Android Open Source Project
++** Copyright 2007-2014, The Android Open Source Project
++** Copyright 2015, The CyanogenMod Project
+ **
+-** Licensed under the Apache License, Version 2.0 (the "License"); 
+-** you may not use this file except in compliance with the License. 
+-** You may obtain a copy of the License at 
++** Licensed under the Apache License, Version 2.0 (the "License");
++** you may not use this file except in compliance with the License.
++** You may obtain a copy of the License at
+ **
+ **     http://www.apache.org/licenses/LICENSE-2.0 
+ **
+@@ -20,28 +21,30 @@
+ #include <stdlib.h>
+ #include <string.h>
+ #include <unistd.h>
++#include <pthread.h>
+ 
+ #include <cutils/iosched_policy.h>
++#define LOG_TAG "iosched_policy"
++#include <cutils/log.h>
++
++#define __android_unused __attribute__((__unused__))
+ 
+ #if defined(__ANDROID__)
+ #include <linux/ioprio.h>
+ #include <sys/syscall.h>
+-#define __android_unused
+-#else
+-#define __android_unused __attribute__((__unused__))
+-#endif
++#include <sys/stat.h>
++
++static int __rtio_cgroup_supported = -1;
++static pthread_once_t __rtio_init_once = PTHREAD_ONCE_INIT;
+ 
+ int android_set_ioprio(int pid __android_unused, IoSchedClass clazz __android_unused, int ioprio __android_unused) {
+-#if defined(__ANDROID__)
+     if (syscall(SYS_ioprio_set, IOPRIO_WHO_PROCESS, pid, ioprio | (clazz << IOPRIO_CLASS_SHIFT))) {
+         return -1;
+     }
+-#endif
+     return 0;
+ }
+ 
+ int android_get_ioprio(int pid __android_unused, IoSchedClass *clazz, int *ioprio) {
+-#if defined(__ANDROID__)
+     int rc;
+ 
+     if ((rc = syscall(SYS_ioprio_get, IOPRIO_WHO_PROCESS, pid)) < 0) {
+@@ -50,9 +53,84 @@ int android_get_ioprio(int pid __android_unused, IoSchedClass *clazz, int *iopri
+ 
+     *clazz = (rc >> IOPRIO_CLASS_SHIFT);
+     *ioprio = (rc & 0xff);
++    return 0;
++}
++
++static void __initialize_rtio(void) {
++    if (!access("/dev/bfqio/tasks", W_OK) ||
++        !access("/dev/bfqio/rt-display/tasks", W_OK)) {
++        __rtio_cgroup_supported = 1;
++    } else {
++        __rtio_cgroup_supported = 0;
++    }
++}
++
++int android_set_rt_ioprio(int tid, int rt) {
++    int fd = -1, rc = -1;
++
++    pthread_once(&__rtio_init_once, __initialize_rtio);
++    if (__rtio_cgroup_supported != 1) {
++        return -1;
++    }
++
++    if (rt) {
++        fd = open("/dev/bfqio/rt-display/tasks", O_WRONLY | O_CLOEXEC);
++    } else {
++        fd = open("/dev/bfqio/tasks", O_WRONLY | O_CLOEXEC);
++    }
++
++    if (fd < 0) {
++        return -1;
++    }
++
++#ifdef HAVE_GETTID
++    if (tid == 0) {
++        tid = gettid();
++    }
++#endif
++
++    // specialized itoa -- works for tid > 0
++    char text[22];
++    char *end = text + sizeof(text) - 1;
++    char *ptr = end;
++    *ptr = '\0';
++    while (tid > 0) {
++        *--ptr = '0' + (tid % 10);
++        tid = tid / 10;
++    }
++
++    rc = write(fd, ptr, end - ptr);
++    if (rc < 0) {
++        /*
++         * If the thread is in the process of exiting,
++         * don't flag an error
++         */
++        if (errno == ESRCH) {
++            rc = 0;
++        } else {
++            SLOGV("android_set_rt_ioprio failed to write '%s' (%s); fd=%d\n",
++                  ptr, strerror(errno), fd);
++        }
++    }
++
++    close(fd);
++    return rc;
++}
++
+ #else
++int android_set_ioprio(int pid __android_unused, IoSchedClass clazz __android_unused, int ioprio __android_unused) {
++    return 0;
++}
++
++int android_get_ioprio(int pid __android_unused, IoSchedClass *clazz, int *ioprio) {
+     *clazz = IoSchedClass_NONE;
+     *ioprio = 0;
+-#endif
+     return 0;
+ }
++
++int android_set_rt_ioprio(int tid __android_unused, int rt __android_unused)
++{
++    return 0;
++}
++#endif
++
+diff --git a/libnetutils/packet.c b/libnetutils/packet.c
+index cd26d058a..bfc5f4d4e 100644
+--- a/libnetutils/packet.c
++++ b/libnetutils/packet.c
+@@ -219,6 +219,20 @@ int receive_packet(int s, struct dhcp_msg *msg)
+      * to construct the pseudo header used in the checksum calculation.
+      */
+     dhcp_size = ntohs(packet.udp.len) - sizeof(packet.udp);
++    /*
++     * check validity of dhcp_size.
++     * 1) cannot be negative or zero.
++     * 2) src buffer contains enough bytes to copy
++     * 3) cannot exceed destination buffer
++     */
++    if ((dhcp_size <= 0) ||
++        ((int)(nread - sizeof(struct iphdr) - sizeof(struct udphdr)) < dhcp_size) ||
++        ((int)sizeof(struct dhcp_msg) < dhcp_size)) {
++#if VERBOSE
++        ALOGD("Malformed Packet");
++#endif
++        return -1;
++    }
+     saddr = packet.ip.saddr;
+     daddr = packet.ip.daddr;
+     nread = ntohs(packet.ip.tot_len);
+diff --git a/libutils/Unicode.cpp b/libutils/Unicode.cpp
+index ba084f6ce..bfacf1ed7 100644
+--- a/libutils/Unicode.cpp
++++ b/libutils/Unicode.cpp
+@@ -18,6 +18,7 @@
+ #include <utils/Unicode.h>
+ 
+ #include <stddef.h>
++#include <limits.h>
+ 
+ #if defined(_WIN32)
+ # undef  nhtol
+@@ -178,7 +179,15 @@ ssize_t utf32_to_utf8_length(const char32_t *src, size_t src_len)
+     size_t ret = 0;
+     const char32_t *end = src + src_len;
+     while (src < end) {
+-        ret += utf32_codepoint_utf8_length(*src++);
++        size_t char_len = utf32_codepoint_utf8_length(*src++);
++        if (SSIZE_MAX - char_len < ret) {
++            // If this happens, we would overflow the ssize_t type when
++            // returning from this function, so we cannot express how
++            // long this string is in an ssize_t.
++            android_errorWriteLog(0x534e4554, "37723026");
++            return -1;
++        }
++        ret += char_len;
+     }
+     return ret;
+ }
+@@ -438,14 +447,23 @@ ssize_t utf16_to_utf8_length(const char16_t *src, size_t src_len)
+     size_t ret = 0;
+     const char16_t* const end = src + src_len;
+     while (src < end) {
++        size_t char_len;
+         if ((*src & 0xFC00) == 0xD800 && (src + 1) < end
+                 && (*(src + 1) & 0xFC00) == 0xDC00) {
+             // surrogate pairs are always 4 bytes.
+-            ret += 4;
++            char_len = 4;
+             src += 2;
+         } else {
+-            ret += utf32_codepoint_utf8_length((char32_t) *src++);
++            char_len = utf32_codepoint_utf8_length((char32_t)*src++);
++        }
++        if (SSIZE_MAX - char_len < ret) {
++            // If this happens, we would overflow the ssize_t type when
++            // returning from this function, so we cannot express how
++            // long this string is in an ssize_t.
++            android_errorWriteLog(0x534e4554, "37723026");
++            return -1;
+         }
++        ret += char_len;
+     }
+     return ret;
+ }
+diff --git a/libziparchive/zip_archive.cc b/libziparchive/zip_archive.cc
+index 9e18c2076..e6add47ca 100644
+--- a/libziparchive/zip_archive.cc
++++ b/libziparchive/zip_archive.cc
+@@ -359,6 +359,8 @@ static int32_t MapCentralDirectory(int fd, const char* debug_file_name,
+   return result;
+ }
+ 
++static inline bool ReadAtOffset(int fd, uint8_t* buf, size_t len, off64_t off);
++
+ /*
+  * Parses the Zip archive's Central Directory.  Allocates and populates the
+  * hash table.
+@@ -437,6 +439,22 @@ static int32_t ParseZipArchive(ZipArchive* archive) {
+       return -1;
+     }
+   }
++
++  uint32_t lfh_start_bytes;
++  if (!ReadAtOffset(archive->fd, reinterpret_cast<uint8_t*>(&lfh_start_bytes),
++                    sizeof(uint32_t), 0)) {
++    ALOGW("Zip: Unable to read header for entry at offset == 0.");
++    return -1;
++  }
++
++  if (lfh_start_bytes != LocalFileHeader::kSignature) {
++    ALOGW("Zip: Entry at offset zero has invalid LFH signature %" PRIx32, lfh_start_bytes);
++#if defined(__ANDROID__)
++    android_errorWriteLog(0x534e4554, "64211847");
++#endif
++    return -1;
++  }
++
+   ALOGV("+++ zip good scan %" PRIu16 " entries", num_entries);
+ 
+   return 0;
+diff --git a/libziparchive/zip_archive_test.cc b/libziparchive/zip_archive_test.cc
+index 6aee1bbdf..b8db6a4d3 100644
+--- a/libziparchive/zip_archive_test.cc
++++ b/libziparchive/zip_archive_test.cc
+@@ -603,6 +603,55 @@ TEST(ziparchive, StreamUncompressedBadCrc) {
+   CloseArchive(handle);
+ }
+ 
++// A zip file whose local file header at offset zero is corrupted.
++//
++// ---------------
++// cat foo > a.txt
++// zip a.zip a.txt
++// cat a.zip | xxd -i
++//
++// Manual changes :
++// [2] = 0xff  // Corrupt the LFH signature of entry 0.
++// [3] = 0xff  // Corrupt the LFH signature of entry 0.
++static const std::vector<uint8_t> kZipFileWithBrokenLfhSignature{
++    //[lfh-sig-----------], [lfh contents---------------------------------
++    0x50, 0x4b, 0xff, 0xff, 0x0a, 0x00, 0x00, 0x00, 0x00, 0x00, 0x77, 0x80,
++    //--------------------------------------------------------------------
++    0x09, 0x4b, 0xa8, 0x65, 0x32, 0x7e, 0x04, 0x00, 0x00, 0x00, 0x04, 0x00,
++    //-------------------------------]  [file-name-----------------], [---
++    0x00, 0x00, 0x05, 0x00, 0x1c, 0x00, 0x61, 0x2e, 0x74, 0x78, 0x74, 0x55,
++    // entry-contents------------------------------------------------------
++    0x54, 0x09, 0x00, 0x03, 0x51, 0x24, 0x8b, 0x59, 0x51, 0x24, 0x8b, 0x59,
++    //--------------------------------------------------------------------
++    0x75, 0x78, 0x0b, 0x00, 0x01, 0x04, 0x89, 0x42, 0x00, 0x00, 0x04, 0x88,
++    //-------------------------------------], [cd-record-sig-------], [---
++    0x13, 0x00, 0x00, 0x66, 0x6f, 0x6f, 0x0a, 0x50, 0x4b, 0x01, 0x02, 0x1e,
++    // cd-record-----------------------------------------------------------
++    0x03, 0x0a, 0x00, 0x00, 0x00, 0x00, 0x00, 0x77, 0x80, 0x09, 0x4b, 0xa8,
++    //--------------------------------------------------------------------
++    0x65, 0x32, 0x7e, 0x04, 0x00, 0x00, 0x00, 0x04, 0x00, 0x00, 0x00, 0x05,
++    //--------------------------------------------------------------------
++    0x00, 0x18, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0xa0,
++    //-]  [lfh-file-header-off-], [file-name-----------------], [extra----
++    0x81, 0x00, 0x00, 0x00, 0x00, 0x61, 0x2e, 0x74, 0x78, 0x74, 0x55, 0x54,
++    //--------------------------------------------------------------------
++    0x05, 0x00, 0x03, 0x51, 0x24, 0x8b, 0x59, 0x75, 0x78, 0x0b, 0x00, 0x01,
++    //-------------------------------------------------------], [eocd-sig-
++    0x04, 0x89, 0x42, 0x00, 0x00, 0x04, 0x88, 0x13, 0x00, 0x00, 0x50, 0x4b,
++    //-------], [---------------------------------------------------------
++    0x05, 0x06, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00, 0x01, 0x00, 0x4b, 0x00,
++    //-------------------------------------------]
++    0x00, 0x00, 0x43, 0x00, 0x00, 0x00, 0x00, 0x00};
++
++TEST(ziparchive, BrokenLfhSignature) {
++  TemporaryFile tmp_file;
++  ASSERT_NE(-1, tmp_file.fd);
++  ASSERT_TRUE(android::base::WriteFully(tmp_file.fd, &kZipFileWithBrokenLfhSignature[0],
++                                        kZipFileWithBrokenLfhSignature.size()));
++  ZipArchiveHandle handle;
++  ASSERT_EQ(-1, OpenArchiveFd(tmp_file.fd, "LeadingNonZipBytes", &handle));
++}
++
+ int main(int argc, char** argv) {
+   ::testing::InitGoogleTest(&argc, argv);
+ 
+diff --git a/rootdir/init.rc b/rootdir/init.rc
+index 1a69875c4..424270881 100644
+--- a/rootdir/init.rc
++++ b/rootdir/init.rc
+@@ -667,6 +667,6 @@ on property:ro.debuggable=1
+ on property:ro.console.enable=1
+     start console
+ 
+-service flash_recovery /system/bin/install-recovery.sh
+-    class main
+-    oneshot
++#service flash_recovery /system/bin/install-recovery.sh
++#    class main
++#    oneshot
